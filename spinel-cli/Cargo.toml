@@ -9,9 +9,9 @@ license.workspace = true
 [dependencies]
 bytes = { version = "1.5.0", features = ["serde"] }
 clap = { version = "4.5.1", features = ["derive"] }
-serialport = { git = "https://github.com/jdswensen/serialport-rs.git", branch = "jds/flow-fromstr", features = ["usbportinfo-interface", "serde"] }
 tokio-serial = { version = "5.4.4", features = ["bytes", "codec"] }
 spinel = { path = "../spinel" }
 tokio = { version = "1.36.0", features = ["rt", "bytes", "full"] }
 futures = "0.3.30"
+serialport = { version = "4.3.0", features = ["usbportinfo-interface"] }
 tokio-util = "0.7.10"
