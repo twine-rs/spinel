@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+    "spinel",
+    "spinel-cli",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Jake Swensen"]
+description = "Control networking devices using the Spinel protocol."
+edition = "2021"
+license = "MPL-2.0"
+license-file = "LICENSE.md"
