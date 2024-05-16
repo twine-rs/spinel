@@ -2,7 +2,23 @@ use crate::error::Error;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertyStream {
+    /// This stream provides the capability of sending human-readable debugging output which may be displayed in
+    /// the host logs.
+    ///
+    /// The location of newline characters is not assumed by the host. It is the device's responsibility to insert
+    /// newline characters where needed. To receive debug output, wait for [`Command::PropertyValueIs`](crate::Command::PropertyValueIs)
+    /// to be sent with this property ID.
     Debug,
+
+    /// This stream provides the capability of sending and receiving data packets to and from the currently attached
+    /// network.
+    ///
+    /// The exact format of the frame metadata and data is dependent on the network protocol being used.
+    ///
+    /// This property is a streaming property, meaning that you cannot explicitly fetch the value of this property. To
+    /// receive traffic, wait for [`Command::PropertyValueIs`](crate::Command::PropertyValueIs) to be sent from
+    /// the device to the host with this property ID. To send network packets a call to
+    /// [`Command::PropertyValueSet`](crate::Command::PropertyValueSet) is required.
     Net,
     NetInsecure,
     Log,
@@ -16,9 +32,21 @@ pub enum Property {
     /// This property is emitted often to indicate the result status of pretty much any Host-to-Device operation.
     /// It is emitted automatically at device startup with a value indicating the reset reason.
     LastStatus,
+
+    /// Describes the protocol version information.
     ProtocolVersion,
+
+    /// Contains a string which describes the firmware currently running on the device.
     NcpVersion,
+
+    /// Identifies the network protocol for the device.
     InterfaceType,
+
+    /// Special properties representing streams of data.
+    ///
+    /// All stream properties emit changes asynchronously using [`Command::PropertyValueIs`](crate::Command::PropertyValueIs)
+    /// sent from the device to the host. Some properties may allow for sending traffic from the host to the device
+    /// (for example IPv6 traffic).
     Stream(PropertyStream),
 }
 
