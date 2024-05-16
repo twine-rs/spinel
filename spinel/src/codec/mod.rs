@@ -11,6 +11,6 @@ mod frame;
 mod property;
 
 pub use command::Command;
-pub use datatype::PackedU32;
+pub use datatype::{PackedU32, Status};
 pub use frame::{Frame, HdlcLiteFrame, Header};
 pub use property::Property;
