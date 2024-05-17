@@ -53,6 +53,9 @@ pub enum Property {
     ///
     /// Typically read-only, but may be writable for some vendor defined circumstances.
     HardwareAddress,
+
+    /// Transmit power of the radio in dBm.
+    PhysicalTxPower,
 }
 
 impl Property {
@@ -61,6 +64,7 @@ impl Property {
     const PROP_NCP_VERSION: u32 = 0x02;
     const PROP_INTERFACE_TYPE: u32 = 0x03;
     const PROP_HWADDR: u32 = 0x08;
+    const PROP_PHY_TX_POWER: u32 = 0x26;
     const PROP_STREAM_DEBUG: u32 = 0x70;
     const PROP_STREAM_NET: u32 = 0x71;
     const PROP_STREAM_NET_INSECURE: u32 = 0x73;
@@ -80,6 +84,7 @@ impl Property {
                 PropertyStream::Log => Self::PROP_STREAM_LOG,
             },
             Property::HardwareAddress => Self::PROP_HWADDR,
+            Property::PhysicalTxPower => Self::PROP_PHY_TX_POWER,
         }
     }
 
@@ -103,6 +108,7 @@ impl TryFrom<u32> for Property {
             Self::PROP_STREAM_NET_INSECURE => Ok(Property::Stream(PropertyStream::NetInsecure)),
             Self::PROP_STREAM_LOG => Ok(Property::Stream(PropertyStream::Log)),
             Self::PROP_HWADDR => Ok(Property::HardwareAddress),
+            Self::PROP_PHY_TX_POWER => Ok(Property::PhysicalTxPower),
             _ => Err(Error::Property(id)),
         }
     }
