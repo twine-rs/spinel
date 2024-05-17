@@ -48,6 +48,11 @@ pub enum Property {
     /// sent from the device to the host. Some properties may allow for sending traffic from the host to the device
     /// (for example IPv6 traffic).
     Stream(PropertyStream),
+
+    /// The static EUI64 address of the device.
+    ///
+    /// Typically read-only, but may be writable for some vendor defined circumstances.
+    HardwareAddress,
 }
 
 impl Property {
@@ -55,6 +60,7 @@ impl Property {
     const PROP_PROTOCOL_VERSION: u32 = 0x01;
     const PROP_NCP_VERSION: u32 = 0x02;
     const PROP_INTERFACE_TYPE: u32 = 0x03;
+    const PROP_HWADDR: u32 = 0x08;
     const PROP_STREAM_DEBUG: u32 = 0x70;
     const PROP_STREAM_NET: u32 = 0x71;
     const PROP_STREAM_NET_INSECURE: u32 = 0x73;
@@ -73,6 +79,7 @@ impl Property {
                 PropertyStream::NetInsecure => Self::PROP_STREAM_NET_INSECURE,
                 PropertyStream::Log => Self::PROP_STREAM_LOG,
             },
+            Property::HardwareAddress => Self::PROP_HWADDR,
         }
     }
 
@@ -95,6 +102,7 @@ impl TryFrom<u32> for Property {
             Self::PROP_STREAM_NET => Ok(Property::Stream(PropertyStream::Net)),
             Self::PROP_STREAM_NET_INSECURE => Ok(Property::Stream(PropertyStream::NetInsecure)),
             Self::PROP_STREAM_LOG => Ok(Property::Stream(PropertyStream::Log)),
+            Self::PROP_HWADDR => Ok(Property::HardwareAddress),
             _ => Err(Error::Property(id)),
         }
     }
