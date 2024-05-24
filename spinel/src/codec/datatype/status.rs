@@ -1,11 +1,13 @@
 /// Status codes for Spinel commands.
 ///
-/// Status codes sent from the device to the host via [`Property::LastStatus`](crate::codec::Property).
+/// Status codes sent from the device to the host via [`Property::LastStatus`](crate::codec::Property). Status codes
+/// represent the result of the last command executed by the device.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Status {
-    /// Operation completed successfully.
+    /// The operation has completed successfully.
     Ok,
 
-    /// Operation has failed (generic).
+    /// The operation has failed generically.
     Failure,
 
     /// The operation has not been implemented.
@@ -17,10 +19,10 @@ pub enum Status {
     /// The operation is not valid in the current state.
     InvalidState,
 
-    /// Command is not recognized.
+    /// The command is not recognized.
     InvalidCommand,
 
-    /// The given interface is not supported.
+    /// The selected interface is not supported.
     InvalidInterface,
 
     /// An internal runtime error has occurred.
@@ -32,13 +34,13 @@ pub enum Status {
     /// An error has occurred while parsing the command.
     ParseError,
 
-    /// The operation is in progress and will be completed asynchronously.
+    /// There is currently an operation in progress.
     InProgress,
 
     /// The operation has been prevented due to memory pressure.
     NoMemory,
 
-    /// The device is currently performing a mutually exclusive operation.
+    /// The device is currently performing another operation and cannot perform the request.
     Busy,
 
     /// The given property is not recognized.
