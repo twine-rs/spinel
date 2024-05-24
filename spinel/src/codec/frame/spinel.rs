@@ -56,10 +56,12 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Create a new [`Frame`] with a given [`Header`] and [`Command`].
     pub fn new(header: Header, command: Command) -> Self {
         Self { header, command }
     }
 
+    /// Encode the [`Frame`] and write it to a buffer.
     pub fn encode(self, buffer: &mut BytesMut) -> Result<(), Error> {
         let header_byte = u8::from(self.header);
         let command = Bytes::try_from(self.command)?;
@@ -70,6 +72,7 @@ impl Frame {
         Ok(())
     }
 
+    /// Decode a [`Frame`] from a buffer.
     pub fn decode(buffer: &Bytes) -> Result<Self, Error> {
         if buffer.len() < 2 {
             return Err(Error::PacketLength(buffer.len()));
