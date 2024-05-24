@@ -1,6 +1,9 @@
-use crate::codec::{PackedU32, Property};
-use crate::error::Error;
+use crate::{
+    codec::{PackedU32, Property},
+    error::Error,
+};
 use bytes::{BufMut, Bytes, BytesMut};
+use core::fmt;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Command {
@@ -28,6 +31,17 @@ pub enum Command {
     /// This command is typically sent in response to a [`Command::PropertyValueGet`](crate::Command::PropertyValueGet)
     /// command. However, it can also be sent by the device asyncronously to notify the host of a property value change.
     PropertyValueIs(Property, Bytes),
+}
+
+impl fmt::Display for Command {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Command::Noop => write!(f, "Noop"),
+            Command::Reset => write!(f, "Reset"),
+            Command::PropertyValueGet(prop) => write!(f, "Get: {}", prop),
+            Command::PropertyValueIs(prop, value) => write!(f, "Is: {} {:?}", prop, value),
+        }
+    }
 }
 
 impl Command {
