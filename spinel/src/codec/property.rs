@@ -1,4 +1,5 @@
 use crate::error::Error;
+use core::fmt;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertyStream {
@@ -22,6 +23,17 @@ pub enum PropertyStream {
     Net,
     NetInsecure,
     Log,
+}
+
+impl fmt::Display for PropertyStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PropertyStream::Debug => write!(f, "Debug"),
+            PropertyStream::Net => write!(f, "Net"),
+            PropertyStream::NetInsecure => write!(f, "NetInsecure"),
+            PropertyStream::Log => write!(f, "Log"),
+        }
+    }
 }
 
 /// Spinel Properties
@@ -56,6 +68,20 @@ pub enum Property {
 
     /// Transmit power of the radio in dBm.
     PhysicalTxPower,
+}
+
+impl fmt::Display for Property {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Property::LastStatus => write!(f, "LastStatus"),
+            Property::ProtocolVersion => write!(f, "ProtocolVersion"),
+            Property::NcpVersion => write!(f, "NcpVersion"),
+            Property::InterfaceType => write!(f, "InterfaceType"),
+            Property::Stream(stream) => write!(f, "{}", stream),
+            Property::HardwareAddress => write!(f, "HardwareAddress"),
+            Property::PhysicalTxPower => write!(f, "PhysicalTxPower"),
+        }
+    }
 }
 
 impl Property {
