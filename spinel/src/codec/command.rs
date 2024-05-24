@@ -8,13 +8,25 @@ pub enum Command {
     ///
     /// Induces the device to send a success status back to the host. This is primarily used for
     /// liveliness checks.
-    ///
-    /// The command payload for this command SHOULD be empty. The receiver MUST ignore any non-empty
-    /// command payload.
     #[default]
     Noop,
+
+    /// Reset
+    ///
+    /// Perform a software reset on the target device. The device will reset and respond with a [`Status`] message
+    /// containing the [`ResetReason`].
     Reset,
+
+    /// Get the value of a property
+    ///
+    /// The device will respond with [`Command::PropertyValueIs`](crate::Command::PropertyValueIs) containing the value
+    /// of the property.
     PropertyValueGet(Property),
+
+    /// Notification of the value of a property
+    ///
+    /// This command is typically sent in response to a [`Command::PropertyValueGet`](crate::Command::PropertyValueGet)
+    /// command. However, it can also be sent by the device asyncronously to notify the host of a property value change.
     PropertyValueIs(Property, Bytes),
 }
 
@@ -56,6 +68,7 @@ impl Command {
         self.packed_len() + self.payload_len()
     }
 
+    /// Encode the command and write it to the buffer.
     pub fn encode(self, buffer: &mut BytesMut) -> Result<(), Error> {
         let id = self.id();
 
@@ -86,6 +99,7 @@ impl Command {
         cmd_count + prop_count
     }
 
+    /// Decode the command from the buffer.
     pub fn decode(buffer: &Bytes) -> Result<Self, Error> {
         if buffer.is_empty() {
             return Err(Error::PacketLength(0));
