@@ -1,4 +1,4 @@
-use crate::{Command, Error};
+use crate::{Command, Error, Property, Status};
 use bytes::{BufMut, Bytes, BytesMut};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -16,12 +16,23 @@ impl Header {
     const HEADER_IID_SHIFT: u32 = 4;
     const HEADER_TID_MASK: u8 = 0b0000_1111;
 
+    /// Create a new [`Header`] with the a Instance Identifier (IID) and Transaction Identifier (TID).
     pub fn new(iid: u8, tid: u8) -> Self {
         Self {
             flag: Self::HEADER_FLAG,
             iid,
             tid,
         }
+    }
+
+    /// Get the Instance Identifier (IID) from the header.
+    pub fn iid(&self) -> u8 {
+        self.iid
+    }
+
+    /// Get the Transaction Identifier (TID) from the header.
+    pub fn tid(&self) -> u8 {
+        self.tid
     }
 }
 
@@ -82,6 +93,27 @@ impl Frame {
             header: Header::try_from(buffer[0])?,
             command: Command::decode(&buffer.clone().split_off(1))?,
         })
+    }
+
+    /// Retrieve a copy of the [`Header`] from the [`Frame`].
+    pub fn header(&self) -> Header {
+        self.header.clone()
+    }
+
+    /// Check the [`Frame`] to see if it has a [`Command::PropertyValueIs`] with a [`Property::LastStatus`].
+    ///
+    /// Returns the [`Status`] if it exists, otherwise `None`.
+    pub fn last_status(&self) -> Option<Status> {
+        match &self.command {
+            Command::PropertyValueIs(prop, value) => {
+                if *prop == Property::LastStatus {
+                    Some(Status::try_from(value[0]).unwrap())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 }
 
