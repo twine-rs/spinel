@@ -100,6 +100,11 @@ impl Frame {
         self.header.clone()
     }
 
+    /// Retrieve a copy of the [`Command`] from the [`Frame`].
+    pub fn command(&self) -> Command {
+        self.command.clone()
+    }
+
     /// Check the [`Frame`] to see if it has a [`Command::PropertyValueIs`] with a [`Property::LastStatus`].
     ///
     /// Returns the [`Status`] if it exists, otherwise `None`.
