@@ -5,5 +5,7 @@ mod error;
 
 #[cfg(feature = "std")]
 pub use codec::HdlcCodec;
-pub use codec::{Command, Frame, HdlcLiteFrame, Header, PackedU32, Property};
+pub use codec::{
+    Command, Frame, HdlcLiteFrame, Header, PackedU32, Property, PropertyStream, Status,
+};
 pub use error::Error;
