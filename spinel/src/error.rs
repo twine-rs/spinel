@@ -3,14 +3,27 @@ use crate::{Frame, Status};
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
         type IoError = String;
-
         impl From<std::io::Error> for Error {
             fn from(e: std::io::Error) -> Self {
                 Error::Io(e.to_string())
             }
         }
+
+        type HostConnectionRecvError = String;
+        impl From<tokio::sync::oneshot::error::RecvError> for Error {
+            fn from(e: tokio::sync::oneshot::error::RecvError) -> Self {
+                Error::HostConnectionRecv(e.to_string())
+            }
+        }
     } else {
         type IoError = ();
+        type HostConnectionRecvError = ();
+    }
+}
+
+impl From<core::str::Utf8Error> for Error {
+    fn from(_: core::str::Utf8Error) -> Self {
+        Error::DatatypeParseU8
     }
 }
 
@@ -33,9 +46,9 @@ pub enum Error {
     HostConnectionSend,
     #[cfg_attr(
         feature = "thiserror",
-        error("Could not receive message, host connection failure")
+        error("Could not receive message, host connection failure: {0}")
     )]
-    HostConnectionRecv,
+    HostConnectionRecv(HostConnectionRecvError),
     #[cfg_attr(feature = "thiserror", error("Unknown command: {0}"))]
     Command(u32),
     #[cfg_attr(feature = "thiserror", error("IO Error: {0}"))]
@@ -55,4 +68,9 @@ pub enum Error {
     Status(Status),
     #[cfg_attr(feature = "thiserror", error("Target sent unexpected response: {0}"))]
     UnexpectedResponse(Frame),
+    #[cfg_attr(
+        feature = "thiserror",
+        error("Unable to parse UTF8 characters. Valid up to: {0}; Len: {1}")
+    )]
+    Utf8Parse(usize, Option<usize>),
 }
