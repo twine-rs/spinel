@@ -1,3 +1,5 @@
+use core::fmt;
+
 /// Status codes for Spinel commands.
 ///
 /// Status codes sent from the device to the host via [`Property::LastStatus`](crate::codec::Property). Status codes
@@ -106,6 +108,38 @@ impl Status {
     const STATUS_UNKNOWN_NEIGHBOR: u8 = 22;
     const STATUS_NOT_CAPABLE: u8 = 23;
     const STATUS_RESPONSE_TIMEOUT: u8 = 24;
+}
+
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Status::Ok => write!(f, "Ok"),
+            Status::Failure => write!(f, "Failure"),
+            Status::Unimplemented => write!(f, "Unimplemented"),
+            Status::InvalidArgument => write!(f, "InvalidArgument"),
+            Status::InvalidState => write!(f, "InvalidState"),
+            Status::InvalidCommand => write!(f, "InvalidCommand"),
+            Status::InvalidInterface => write!(f, "InvalidInterface"),
+            Status::InternalError => write!(f, "InternalError"),
+            Status::SecurityError => write!(f, "SecurityError"),
+            Status::ParseError => write!(f, "ParseError"),
+            Status::InProgress => write!(f, "InProgress"),
+            Status::NoMemory => write!(f, "NoMemory"),
+            Status::Busy => write!(f, "Busy"),
+            Status::PropertyNotFound => write!(f, "PropertyNotFound"),
+            Status::PacketDropped => write!(f, "PacketDropped"),
+            Status::Empty => write!(f, "Empty"),
+            Status::CommandTooBig => write!(f, "CommandTooBig"),
+            Status::NoAck => write!(f, "NoAck"),
+            Status::CcaFailure => write!(f, "CcaFailure"),
+            Status::Already => write!(f, "Already"),
+            Status::ItemNotFound => write!(f, "ItemNotFound"),
+            Status::InvalidCommandForProperty => write!(f, "InvalidCommandForProperty"),
+            Status::UnknownNeighbor => write!(f, "UnknownNeighbor"),
+            Status::NotCapable => write!(f, "NotCapable"),
+            Status::ResponseTimeout => write!(f, "ResponseTimeout"),
+        }
+    }
 }
 
 impl TryFrom<u8> for Status {
