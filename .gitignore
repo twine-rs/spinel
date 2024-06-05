@@ -2,5 +2,6 @@
 **/coverage
 **/target
 *.profraw
+*.patch
 Cargo.lock
 debug-serial
