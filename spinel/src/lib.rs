@@ -3,9 +3,15 @@
 pub mod codec;
 mod error;
 
-#[cfg(feature = "std")]
-pub use codec::HdlcCodec;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "std")] {
+        pub use codec::HdlcCodec;
+        pub use connection::{SpinelHostConnection, PosixSpinelHostHandle};
+    }
+}
+
 pub use codec::{
     Command, Frame, HdlcLiteFrame, Header, PackedU32, Property, PropertyStream, Status,
 };
+mod connection;
 pub use error::Error;
