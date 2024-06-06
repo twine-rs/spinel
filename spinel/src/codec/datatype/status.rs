@@ -210,6 +210,7 @@ impl From<Status> for u8 {
 }
 
 /// Reasons that a device has reset.
+#[derive(Clone, Debug, PartialEq)]
 pub enum ResetReason {
     PowerOn,
     External,
@@ -223,21 +224,21 @@ pub enum ResetReason {
 }
 
 impl ResetReason {
-    const RESET_POWER_ON: u8 = 112;
-    const RESET_EXTERNAL: u8 = 113;
-    const RESET_SOFTWARE: u8 = 114;
-    const RESET_FAULT: u8 = 115;
-    const RESET_CRASH: u8 = 116;
-    const RESET_ASSERT: u8 = 117;
-    const RESET_OTHER: u8 = 118;
-    const RESET_UNKNOWN: u8 = 119;
-    const RESET_WATCHDOG: u8 = 120;
+    const RESET_POWER_ON: u32 = 112;
+    const RESET_EXTERNAL: u32 = 113;
+    const RESET_SOFTWARE: u32 = 114;
+    const RESET_FAULT: u32 = 115;
+    const RESET_CRASH: u32 = 116;
+    const RESET_ASSERT: u32 = 117;
+    const RESET_OTHER: u32 = 118;
+    const RESET_UNKNOWN: u32 = 119;
+    const RESET_WATCHDOG: u32 = 120;
 }
 
-impl TryFrom<u8> for ResetReason {
+impl TryFrom<u32> for ResetReason {
     type Error = ();
 
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
             Self::RESET_POWER_ON => Ok(Self::PowerOn),
             Self::RESET_EXTERNAL => Ok(Self::External),
