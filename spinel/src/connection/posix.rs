@@ -66,6 +66,7 @@ impl fmt::Display for PosixSpinelHostMessage {
     }
 }
 
+/// Internal message to request a subscription to a specific message type.
 enum SubscribeRequest {
     Reset,
     DebugBroadcast,
