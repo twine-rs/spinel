@@ -4,7 +4,7 @@ use crc16::State;
 
 #[derive(Debug, PartialEq)]
 pub struct HdlcLiteFrame {
-    spinel_frame: Frame,
+    frame: Frame,
 }
 
 impl HdlcLiteFrame {
@@ -83,7 +83,7 @@ impl HdlcLiteFrame {
     /// Create a new [`HdlcLiteFrame`] from a standard Spinel [`Frame`].
     pub fn new(frame: Frame) -> Self {
         Self {
-            spinel_frame: frame,
+            frame,
         }
     }
 
@@ -93,7 +93,7 @@ impl HdlcLiteFrame {
         // todo: check for escape, new BytesMut first then write to input buffer
 
         buffer.put_u8(Self::FRAME_DELIMITER_FLAG);
-        self.spinel_frame.encode(buffer)?;
+        self.frame.encode(buffer)?;
         let crc = State::<crc16::X_25>::calculate(&buffer[1..]);
         buffer.put_u16_le(crc);
         buffer.put_u8(Self::FRAME_DELIMITER_FLAG);
@@ -156,13 +156,13 @@ impl HdlcLiteFrame {
         }
 
         let frozen = packet.freeze();
-        let spinel_frame = Frame::decode(&frozen)?;
+        let frame = Frame::decode(&frozen)?;
 
-        Ok(Self { spinel_frame })
+        Ok(Self { frame })
     }
 
     pub fn into_inner(self) -> Frame {
-        self.spinel_frame
+        self.frame
     }
 }
 
@@ -282,8 +282,8 @@ mod tests {
     fn encode_noop() {
         let header = Header::new(0x00, 0x01);
         let cmd = Command::Noop;
-        let spinel_frame = Frame::new(header, cmd);
-        let hdlc_frame = HdlcLiteFrame::new(spinel_frame);
+        let frame = Frame::new(header, cmd);
+        let hdlc_frame = HdlcLiteFrame::new(frame);
 
         let mut buffer = BytesMut::with_capacity(32);
         hdlc_frame.encode(&mut buffer).unwrap();
@@ -302,9 +302,9 @@ mod tests {
     fn encode_property_get_ncp_version() {
         let header = Header::new(0x00, 0x01);
         let cmd = Command::PropertyValueGet(Property::NcpVersion);
-        let spinel_frame = Frame::new(header, cmd);
+        let frame = Frame::new(header, cmd);
 
-        let hdlc_frame = HdlcLiteFrame::new(spinel_frame);
+        let hdlc_frame = HdlcLiteFrame::new(frame);
         let mut buffer = BytesMut::with_capacity(4096);
         hdlc_frame.encode(&mut buffer).unwrap();
         println!("{buffer:02x?}");
@@ -344,8 +344,8 @@ mod tests {
             Property::NcpVersion,
             Bytes::from_static(TEST_RESP_NCP_VERSION_STR.as_bytes()),
         );
-        let spinel_frame = Frame::new(header, cmd);
-        let hdlc_frame = HdlcLiteFrame::new(spinel_frame);
+        let frame = Frame::new(header, cmd);
+        let hdlc_frame = HdlcLiteFrame::new(frame);
         let mut buffer = BytesMut::with_capacity(4096);
         hdlc_frame.encode(&mut buffer).unwrap();
         assert_eq!(buffer, Bytes::from_static(&TEST_RESP_NCP_VERSION_ARRAY));
