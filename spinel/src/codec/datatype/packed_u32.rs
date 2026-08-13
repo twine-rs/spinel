@@ -224,7 +224,7 @@ mod tests {
         for item in TEST_PACK_ARRAY.iter() {
             let test = PackedU32 { array: item.packed };
 
-            let result: u32 = test.try_into().unwrap();
+            let result: u32 = test.into();
             assert_eq!(result, item.unpacked);
             assert_eq!(test.byte_len(), item.count);
 
