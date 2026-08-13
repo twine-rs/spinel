@@ -74,10 +74,7 @@ impl<V: Vendor> HdlcLiteFrame<V> {
 
         // Determine if an end delimiter was found.
         // Note: `next` shouldn't necessarily end up returning `None` because the loop should always find a delimiter.
-        let next = match next_delimiter_pos {
-            Some(pos) => pos,
-            None => return None,
-        };
+        let next = next_delimiter_pos?;
 
         Some((first_delimiter_pos, next))
     }
