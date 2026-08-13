@@ -8,19 +8,30 @@ license.workspace = true
 
 [features]
 default = ["std"]
-std = ["tokio", "tokio-serial", "futures", "platform-switch/std_error"]
-mcu = ["platform-switch/core_error"]
+std = [
+    "alloc",
+    "bytes/std",
+    "thiserror/std",
+    "dep:tokio",
+    "dep:tokio-serial",
+    "dep:tokio-util",
+    "dep:futures",
+    "dep:log",
+]
+alloc = []
+defmt = ["dep:defmt"]
 
 [dependencies]
-bitflags = "2.4.2"
 bytes = { version = "1.5.0", default-features = false }
 cfg-if = "1.0.0"
 crc16 = "0.4.0"
+thiserror = { version = "2", default-features = false }
+defmt = { version = "1", optional = true }
 futures = { version = "0.3.30", optional = true }
-platform-switch = { version = "0.1.0", features = ["thiserror"] }
+log = { version = "0.4", optional = true }
 tokio = { version = "1.36.0", features = ["full"], optional = true }
 tokio-serial = { version = "5.4.4", features = ["bytes", "codec"], optional = true }
-tokio-util = { version = "0.7.10", features = ["codec"] }
+tokio-util = { version = "0.7.10", features = ["codec"], optional = true }
 
 [dev-dependencies]
 rand = "0.8.5"
