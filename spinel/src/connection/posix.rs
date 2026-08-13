@@ -20,7 +20,7 @@ use tokio_util::codec::{Decoder, Framed};
 type OneshotFrameReply = oneshot::Sender<Result<oneshot::Receiver<Frame>, Error>>;
 type BroadcastFrameReply = oneshot::Sender<Result<Receiver<Frame>, Error>>;
 
-/// A TID with a value of zero is resevered for messages where a response is not expected.
+/// A TID with a value of zero is reserved for messages where a response is not expected.
 /// Start the TID at 1 to avoid the reserved value.
 const TID_START: u8 = 1;
 
@@ -277,7 +277,7 @@ struct PosixSpinelHost {
     /// Message request channel from the host
     msg: mpsc::UnboundedReceiver<PosixSpinelHostMessage>,
 
-    /// HDLC encoded stream of messages comming from a serial device
+    /// HDLC encoded stream of messages coming from a serial device
     stream: Framed<SerialStream, HdlcCodec>,
 
     /// Instance ID

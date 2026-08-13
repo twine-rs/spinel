@@ -41,7 +41,7 @@ pub enum Command<V: Vendor = NoVendor> {
     /// Notification of the value of a property
     ///
     /// This command is typically sent in response to a [`Command::PropertyValueGet`](crate::Command::PropertyValueGet)
-    /// command. However, it can also be sent by the device asyncronously to notify the host of a property value change.
+    /// command. However, it can also be sent by the device asynchronously to notify the host of a property value change.
     PropertyValueIs(Property<V>, Bytes),
 
     /// A vendor-defined command carrying an opaque payload.
