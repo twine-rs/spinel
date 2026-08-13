@@ -1,12 +1,11 @@
 use super::SpinelHostConnection;
 use crate::{
-    codec::{PackedU32, ResetReason, Status},
+    codec::{NoVendor, PackedU32, ResetReason, Status},
     Command, Error, Frame, HdlcCodec, Header, Property, PropertyStream,
 };
 use bytes::Bytes;
 use core::fmt;
 use futures::{sink::SinkExt, stream::StreamExt};
-use platform_switch::log;
 use std::collections::HashMap;
 use tokio::{
     select,
@@ -102,7 +101,7 @@ impl PosixSpinelHostHandle {
                 log::error!("Serial Config: {e}");
                 Error::SerialConfig
             })?;
-        let stream = HdlcCodec.framed(port);
+        let stream = HdlcCodec::<NoVendor>::default().framed(port);
 
         let host_connection = PosixSpinelHost {
             msg: handle_rx,
@@ -231,10 +230,10 @@ impl SpinelHostConnection for PosixSpinelHostHandle {
             if status == Status::Ok {
                 Ok(())
             } else {
-                Err(Error::Status(status))
+                Err(Error::Status(u32::from(status)))
             }
         } else {
-            Err(Error::UnexpectedResponse(response))
+            Err(Error::UnexpectedResponse(response.command().id()))
         }
     }
 
@@ -266,9 +265,10 @@ impl SpinelHostConnection for PosixSpinelHostHandle {
             .send_request(Command::PropertyValueGet(Property::NcpVersion))
             .await?;
 
+        let cmd_id = response.command().id();
         match response.command {
             Command::PropertyValueIs(Property::NcpVersion, value) => Ok(value),
-            _ => Err(Error::UnexpectedResponse(response)),
+            _ => Err(Error::UnexpectedResponse(cmd_id)),
         }
     }
 }
