@@ -9,6 +9,7 @@ use bytes::{BufMut, BytesMut};
 ///
 /// [1] https://www.w3.org/TR/exi/#encodingUnsignedInteger
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PackedU32 {
     /// The packed [`u32`] value.
     pub(crate) array: [u8; 3],
@@ -135,7 +136,7 @@ impl TryFrom<&PackedByteSlice> for PackedU32 {
     fn try_from(bytes: &PackedByteSlice) -> Result<Self, Self::Error> {
         let count = Self::count_bytes(bytes);
 
-        if count > 3 {
+        if count == 0 || count > 3 {
             return Err(Error::PackedU32ByteCount);
         }
 

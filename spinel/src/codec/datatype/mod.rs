@@ -1,6 +1,8 @@
+mod caps;
 mod packed_u32;
 mod status;
 
+pub use caps::{write_caps, Capability, CapabilityIter};
 pub use packed_u32::PackedU32;
 pub use status::{ResetReason, Status};
 
