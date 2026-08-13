@@ -1,6 +1,3 @@
-use crate::{Frame, Status};
-use platform_switch::thiserror;
-
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
         type IoError = String;
@@ -46,12 +43,14 @@ pub enum Error {
     Property(u32),
     #[error("Invalid number of bytes for a packed integer")]
     PackedU32ByteCount,
+    #[error("Capabilities list contains a malformed packed integer")]
+    CapsMalformed,
     #[error("Incorrect packet length: {0}")]
     PacketLength(usize),
     #[error("Error configuring serial port")]
     SerialConfig,
     #[error("Target status: {0}")]
-    Status(Status),
-    #[error("Target sent unexpected response: {0:?}")]
-    UnexpectedResponse(Frame),
+    Status(u32),
+    #[error("Target sent an unexpected response for command: {0}")]
+    UnexpectedResponse(u32),
 }
