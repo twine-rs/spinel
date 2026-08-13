@@ -116,7 +116,12 @@ impl<V: Vendor> Frame<V> {
         match &self.command {
             Command::PropertyValueIs(prop, value) => {
                 if *prop == Property::LastStatus {
-                    Some(Status::from(PackedU32::decode(value).0))
+                    let (status, len) = PackedU32::decode(value);
+                    if len == 0 || len > 3 {
+                        None
+                    } else {
+                        Some(Status::from(status))
+                    }
                 } else {
                     None
                 }
@@ -168,5 +173,15 @@ mod tests {
         let buffer = Bytes::from_static(&[0x01]);
         let frame = Frame::<NoVendor>::decode(&buffer);
         assert_eq!(frame, Err(Error::PacketLength(1)));
+    }
+
+    #[test]
+    fn last_status_ignores_malformed_payload() {
+        let frame = Frame::<NoVendor>::new(
+            Header::new(0x1, 0x2),
+            Command::PropertyValueIs(Property::LastStatus, Bytes::from_static(&[0x80])),
+        );
+
+        assert_eq!(frame.last_status(), None);
     }
 }

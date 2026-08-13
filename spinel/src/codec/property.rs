@@ -172,7 +172,21 @@ impl<V: Vendor> TryFrom<&[u8]> for Property<V> {
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         use crate::codec::PackedU32;
         let len = PackedU32::count_bytes(bytes);
+        if len == 0 || len > 3 {
+            return Err(Error::PackedU32ByteCount);
+        }
         let prop_id = PackedU32::decode(&bytes[..len]).0;
         Property::try_from(prop_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_fails_on_malformed_packed_property_id() {
+        let prop = Property::<NoVendor>::try_from(&[0x80][..]);
+        assert_eq!(prop, Err(Error::PackedU32ByteCount));
     }
 }

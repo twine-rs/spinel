@@ -169,6 +169,9 @@ impl<V: Vendor> Command<V> {
         }
 
         let cmd_id_len = PackedU32::count_bytes(buffer.as_ref());
+        if cmd_id_len == 0 || cmd_id_len > 3 {
+            return Err(Error::PackedU32ByteCount);
+        }
         let id = PackedU32::decode(&buffer[..cmd_id_len]).0;
         let payload = &buffer[cmd_id_len..];
 
@@ -288,6 +291,12 @@ mod tests {
     fn decode_fails_on_unknown_command() {
         let cmd = Command::<NoVendor>::decode(&Bytes::from_static(&[0xFF, 0xFF, 0x7F]));
         assert_eq!(cmd, Err(Error::Command(2_097_151)));
+    }
+
+    #[test]
+    fn decode_fails_on_malformed_packed_command_id() {
+        let cmd = Command::<NoVendor>::decode(&Bytes::from_static(&[0x80]));
+        assert_eq!(cmd, Err(Error::PackedU32ByteCount));
     }
 
     #[test]
