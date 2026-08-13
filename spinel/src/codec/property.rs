@@ -171,11 +171,7 @@ impl<V: Vendor> TryFrom<&[u8]> for Property<V> {
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         use crate::codec::PackedU32;
-        let len = PackedU32::count_bytes(bytes);
-        if len == 0 || len > 3 {
-            return Err(Error::PackedU32ByteCount);
-        }
-        let prop_id = PackedU32::decode(&bytes[..len]).0;
+        let (prop_id, _) = PackedU32::decode_checked(bytes)?;
         Property::try_from(prop_id)
     }
 }

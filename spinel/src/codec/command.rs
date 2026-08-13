@@ -168,11 +168,7 @@ impl<V: Vendor> Command<V> {
             return Err(Error::PacketLength(0));
         }
 
-        let cmd_id_len = PackedU32::count_bytes(buffer.as_ref());
-        if cmd_id_len == 0 || cmd_id_len > 3 {
-            return Err(Error::PackedU32ByteCount);
-        }
-        let id = PackedU32::decode(&buffer[..cmd_id_len]).0;
+        let (id, cmd_id_len) = PackedU32::decode_checked(buffer.as_ref())?;
         let payload = &buffer[cmd_id_len..];
 
         match id {

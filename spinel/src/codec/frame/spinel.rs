@@ -116,12 +116,9 @@ impl<V: Vendor> Frame<V> {
         match &self.command {
             Command::PropertyValueIs(prop, value) => {
                 if *prop == Property::LastStatus {
-                    let (status, len) = PackedU32::decode(value);
-                    if len == 0 || len > 3 {
-                        None
-                    } else {
-                        Some(Status::from(status))
-                    }
+                    PackedU32::decode_checked(value)
+                        .ok()
+                        .map(|(status, _)| Status::from(status))
                 } else {
                     None
                 }

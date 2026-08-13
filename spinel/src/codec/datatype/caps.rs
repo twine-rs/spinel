@@ -80,14 +80,13 @@ impl<V: Vendor> Iterator for CapabilityIter<'_, V> {
             return None;
         }
 
-        // `decode` returns the value and the number of bytes consumed, or a
-        // count of 0 when there is no terminating octet within a packed
-        // integer's three bytes (a truncated tail or an over-long value).
-        let (id, consumed) = PackedU32::decode(self.bytes);
-        if consumed == 0 {
-            self.bytes = &[];
-            return Some(Err(Error::CapsMalformed));
-        }
+        let (id, consumed) = match PackedU32::decode_checked(self.bytes) {
+            Ok(decoded) => decoded,
+            Err(_) => {
+                self.bytes = &[];
+                return Some(Err(Error::CapsMalformed));
+            }
+        };
 
         self.bytes = &self.bytes[consumed..];
         Some(Ok(Capability::from(id)))

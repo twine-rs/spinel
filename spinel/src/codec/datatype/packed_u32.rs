@@ -92,6 +92,17 @@ impl PackedU32 {
         (value, count)
     }
 
+    /// Decode a structurally valid packed [`u32`] value from a byte slice.
+    ///
+    /// Returns the decoded value and number of bytes consumed. Errors if the
+    /// slice does not contain a valid packed integer terminator within the
+    /// protocol's three-byte limit.
+    #[inline]
+    pub fn decode_checked(bytes: &PackedByteSlice) -> Result<(u32, usize), Error> {
+        let packed = Self::try_from(bytes)?;
+        Ok((u32::from(packed), Self::count_bytes(&packed.array)))
+    }
+
     /// Get the expected length of the packed [`u32`] value
     #[inline]
     pub fn packed_len(value: u32) -> usize {
@@ -141,7 +152,7 @@ impl TryFrom<&PackedByteSlice> for PackedU32 {
         }
 
         let mut array = [0; 3];
-        array.copy_from_slice(&bytes[..count]);
+        array[..count].copy_from_slice(&bytes[..count]);
 
         Ok(PackedU32 { array })
     }
