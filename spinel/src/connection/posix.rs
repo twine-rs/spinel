@@ -146,7 +146,9 @@ impl PosixSpinelHostHandle {
                 PosixSpinelHostMessage::SubscribeLogBroadcast { reply: sender }
             }
         };
-        let _ = self.transaction.send(msg);
+        self.transaction
+            .send(msg)
+            .map_err(|_| Error::HostConnectionSend)?;
         receiver.await?
     }
 
@@ -315,15 +317,19 @@ impl PosixSpinelHost {
                                     // todo: rework so that the payload is broadcast, not the frame
                                     match frame.command() {
                                         Command::PropertyValueIs(Property::LastStatus, bytes) => {
-                                            let reset_reason = PackedU32::decode(&bytes).0;
-                                            match ResetReason::try_from(reset_reason) {
-                                                Ok(reason) => {
-                                                    log::trace!("Reset reason: {reason:?}");
-                                                    self.reset_tid();
-                                                    let _ = self.reset_broadcast.send(frame);
-                                                }
-                                                Err(e) => {
-                                                    log::error!("Invalid reset reason: {e:?}");
+                                            let (reset_reason, len) = PackedU32::decode(&bytes);
+                                            if len == 0 || len > 3 {
+                                                log::error!("Malformed reset reason payload: {bytes:?}");
+                                            } else {
+                                                match ResetReason::try_from(reset_reason) {
+                                                    Ok(reason) => {
+                                                        log::trace!("Reset reason: {reason:?}");
+                                                        self.reset_tid();
+                                                        let _ = self.reset_broadcast.send(frame);
+                                                    }
+                                                    Err(e) => {
+                                                        log::error!("Invalid reset reason: {e:?}");
+                                                    }
                                                 }
                                             }
                                         }
