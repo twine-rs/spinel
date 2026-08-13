@@ -27,10 +27,7 @@ impl<V: Vendor> Encoder<Frame<V>> for HdlcCodec<V> {
             Ok(_) => Ok(()),
             Err(e) => {
                 eprintln!("Frame encode error: {:?}", e);
-                Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("Encoder error: {e:?}"),
-                ))
+                Err(io::Error::other(format!("Encoder error: {e:?}")))
             }
         }
     }
@@ -53,10 +50,7 @@ impl<V: Vendor> Decoder for HdlcCodec<V> {
                 Ok(f) => Ok(Some(f.into_inner())),
                 Err(e) => {
                     eprintln!("Frame decode error: {:?}", e);
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("Decoder error: {e:?}"),
-                    ))
+                    Err(io::Error::other(format!("Decoder error: {e:?}")))
                 }
             };
         }
