@@ -68,6 +68,8 @@ pub enum Property {
 
     /// Transmit power of the radio in dBm.
     PhysicalTxPower,
+
+    Vendor(u32),
 }
 
 impl fmt::Display for Property {
@@ -80,6 +82,7 @@ impl fmt::Display for Property {
             Property::Stream(stream) => write!(f, "{}", stream),
             Property::HardwareAddress => write!(f, "HardwareAddress"),
             Property::PhysicalTxPower => write!(f, "PhysicalTxPower"),
+            Property::Vendor(id) => write!(f, "Vendor: {id}"),
         }
     }
 }
@@ -111,6 +114,7 @@ impl Property {
             },
             Property::HardwareAddress => Self::PROP_HWADDR,
             Property::PhysicalTxPower => Self::PROP_PHY_TX_POWER,
+            Property::Vendor(id) => *id,
         }
     }
 
