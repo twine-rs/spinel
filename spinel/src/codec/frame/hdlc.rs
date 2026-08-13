@@ -214,7 +214,7 @@ mod tests {
         // Generate a some what random vector and make sure it does not contain
         // the frame delimiter
         let mut test_vector: Vec<u8> = (0..512)
-            .map(|_| rng.sample(&range))
+            .map(|_| rng.sample(range))
             .map(|b| if b == 0x7E { b + 1 } else { b })
             .collect();
 
