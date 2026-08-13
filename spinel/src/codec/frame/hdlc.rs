@@ -1,13 +1,15 @@
+use crate::codec::vendor::{NoVendor, Vendor};
 use crate::{Error, Frame};
 use bytes::{BufMut, Bytes, BytesMut};
 use crc16::State;
 
 #[derive(Debug, PartialEq)]
-pub struct HdlcLiteFrame {
-    frame: Frame,
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HdlcLiteFrame<V: Vendor = NoVendor> {
+    frame: Frame<V>,
 }
 
-impl HdlcLiteFrame {
+impl<V: Vendor> HdlcLiteFrame<V> {
     const FRAME_DELIMITER_FLAG: u8 = 0x7E;
     const ESCAPE_BYTE_FLAG: u8 = 0x7D;
     const XON: u8 = 0x11;
@@ -81,10 +83,8 @@ impl HdlcLiteFrame {
     }
 
     /// Create a new [`HdlcLiteFrame`] from a standard Spinel [`Frame`].
-    pub fn new(frame: Frame) -> Self {
-        Self {
-            frame,
-        }
+    pub fn new(frame: Frame<V>) -> Self {
+        Self { frame }
     }
 
     /// Encode a [`HdlcLiteFrame`] into a mutable buffer of [`BytesMut`].
@@ -161,7 +161,7 @@ impl HdlcLiteFrame {
         Ok(Self { frame })
     }
 
-    pub fn into_inner(self) -> Frame {
+    pub fn into_inner(self) -> Frame<V> {
         self.frame
     }
 }
@@ -227,14 +227,15 @@ mod tests {
 
         // Determine if the frame delimiter is found in the correct position
         let bytes = Bytes::from(test_vector);
-        let index = HdlcLiteFrame::find_frame_delimiter(&bytes);
+        let index = HdlcLiteFrame::<NoVendor>::find_frame_delimiter(&bytes);
         assert_eq!(index, Some(random_index));
     }
 
     #[test]
     fn finds_frame_in_misaligned_buffer() {
         let bytes = [0x09, 0x27, 0x7e, 0x81, 0x00, 0x53, 0x9a, 0x7e, 0x11, 0x23];
-        let result = HdlcLiteFrame::find_frame(&Bytes::from_iter(bytes.iter().cloned()));
+        let result =
+            HdlcLiteFrame::<NoVendor>::find_frame(&Bytes::from_iter(bytes.iter().cloned()));
         assert_eq!(result, Some((2, 7)));
     }
 
@@ -245,7 +246,7 @@ mod tests {
         *test = 0x00;
 
         assert_eq!(
-            HdlcLiteFrame::decode(&bytes.freeze()),
+            HdlcLiteFrame::<NoVendor>::decode(&bytes.freeze()),
             Err(Error::HdlcChecksum(0x9A53))
         );
     }
@@ -254,11 +255,11 @@ mod tests {
     fn errors_on_missing_delimiter() {
         let bytes = [0x7E, 0x7D, 0x11, 0x13, 0xF8, 0x7E];
         let missing_start = Bytes::copy_from_slice(&bytes[1..]);
-        let test = HdlcLiteFrame::decode(&missing_start);
+        let test = HdlcLiteFrame::<NoVendor>::decode(&missing_start);
         assert_eq!(test, Err(Error::HdlcStartDelimiter(0x7D)));
 
         let missing_end = Bytes::copy_from_slice(&bytes[..5]);
-        let test = HdlcLiteFrame::decode(&missing_end);
+        let test = HdlcLiteFrame::<NoVendor>::decode(&missing_end);
         assert_eq!(test, Err(Error::HdlcEndDelimiter(0xF8)));
     }
 
@@ -266,15 +267,15 @@ mod tests {
     fn requires_escape() {
         let escape_bytes = [0x7E, 0x7D, 0x11, 0x13, 0xF8];
         for byte in escape_bytes.iter() {
-            let escape = HdlcLiteFrame::requires_escape(*byte);
-            assert_eq!(escape, true);
+            let escape = HdlcLiteFrame::<NoVendor>::requires_escape(*byte);
+            assert!(escape);
         }
     }
 
     #[test]
     fn find_frame_returns_none_on_desync() {
         let bytes = Bytes::from_static(&TEST_DESYNC_STR);
-        let frame = HdlcLiteFrame::find_frame(&bytes);
+        let frame = HdlcLiteFrame::<NoVendor>::find_frame(&bytes);
         assert_eq!(frame, None);
     }
 
@@ -282,7 +283,7 @@ mod tests {
     fn encode_noop() {
         let header = Header::new(0x00, 0x01);
         let cmd = Command::Noop;
-        let frame = Frame::new(header, cmd);
+        let frame: Frame = Frame::new(header, cmd);
         let hdlc_frame = HdlcLiteFrame::new(frame);
 
         let mut buffer = BytesMut::with_capacity(32);
@@ -294,7 +295,7 @@ mod tests {
     fn decode_noop() {
         let bytes = Bytes::from_static(&TEST_REQ_NOOP_ARRAY);
         let frame = HdlcLiteFrame::decode(&bytes);
-        let expected = Frame::new(Header::new(0x00, 0x01), Command::Noop);
+        let expected: Frame = Frame::new(Header::new(0x00, 0x01), Command::Noop);
         assert_eq!(frame, Ok(HdlcLiteFrame::new(expected)));
     }
 
@@ -302,7 +303,7 @@ mod tests {
     fn encode_property_get_ncp_version() {
         let header = Header::new(0x00, 0x01);
         let cmd = Command::PropertyValueGet(Property::NcpVersion);
-        let frame = Frame::new(header, cmd);
+        let frame: Frame = Frame::new(header, cmd);
 
         let hdlc_frame = HdlcLiteFrame::new(frame);
         let mut buffer = BytesMut::with_capacity(4096);
@@ -316,7 +317,7 @@ mod tests {
     fn decode_property_get_ncp_version() {
         let bytes = Bytes::from_static(&TEST_REQ_NCP_VERSION_ARRAY);
         let frame = HdlcLiteFrame::decode(&bytes);
-        let expected = HdlcLiteFrame::new(Frame::new(
+        let expected = HdlcLiteFrame::new(Frame::<NoVendor>::new(
             Header::new(0x00, 0x01),
             Command::PropertyValueGet(Property::NcpVersion),
         ));
@@ -327,7 +328,7 @@ mod tests {
     fn decode_ncp_version_property_is() {
         let bytes = Bytes::from_static(&TEST_RESP_NCP_VERSION_ARRAY);
         let frame = HdlcLiteFrame::decode(&bytes);
-        let expected = HdlcLiteFrame::new(Frame::new(
+        let expected = HdlcLiteFrame::new(Frame::<NoVendor>::new(
             Header::new(0x00, 0x01),
             Command::PropertyValueIs(
                 Property::NcpVersion,
@@ -344,7 +345,7 @@ mod tests {
             Property::NcpVersion,
             Bytes::from_static(TEST_RESP_NCP_VERSION_STR.as_bytes()),
         );
-        let frame = Frame::new(header, cmd);
+        let frame: Frame = Frame::new(header, cmd);
         let hdlc_frame = HdlcLiteFrame::new(frame);
         let mut buffer = BytesMut::with_capacity(4096);
         hdlc_frame.encode(&mut buffer).unwrap();
@@ -355,7 +356,7 @@ mod tests {
     fn decode_stream() {
         let bytes = Bytes::from_static(&TEST_HDLC_DECODE_STREAM);
         println!("bytes: {:02x?}", &bytes[..]);
-        let frame = HdlcLiteFrame::decode(&bytes);
+        let frame = HdlcLiteFrame::<NoVendor>::decode(&bytes);
         assert!(frame.is_ok());
         // todo: assert frame is stream
     }

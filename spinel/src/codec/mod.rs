@@ -12,7 +12,7 @@ mod property;
 pub(crate) mod vendor;
 
 pub use command::Command;
-pub use datatype::{PackedU32, ResetReason, Status};
+pub use datatype::{write_caps, Capability, CapabilityIter, PackedU32, ResetReason, Status};
 pub use frame::{Frame, HdlcLiteFrame, Header};
 pub use property::{Property, PropertyStream};
 pub use vendor::{MaybeFormat, Never, NoVendor, Vendor, VendorValue};

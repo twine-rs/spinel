@@ -1,7 +1,10 @@
+use crate::codec::vendor::{NoVendor, Vendor};
+use crate::codec::PackedU32;
 use crate::{Command, Error, Property, Status};
 use bytes::{BufMut, Bytes, BytesMut};
 
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Header {
     flag: u8,
     iid: u8,
@@ -61,14 +64,15 @@ impl TryFrom<u8> for Header {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Frame {
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Frame<V: Vendor = NoVendor> {
     pub(crate) header: Header,
-    pub(crate) command: Command,
+    pub(crate) command: Command<V>,
 }
 
-impl Frame {
+impl<V: Vendor> Frame<V> {
     /// Create a new [`Frame`] with a given [`Header`] and [`Command`].
-    pub fn new(header: Header, command: Command) -> Self {
+    pub fn new(header: Header, command: Command<V>) -> Self {
         Self { header, command }
     }
 
@@ -101,18 +105,18 @@ impl Frame {
     }
 
     /// Retrieve a copy of the [`Command`] from the [`Frame`].
-    pub fn command(&self) -> Command {
+    pub fn command(&self) -> Command<V> {
         self.command.clone()
     }
 
     /// Check the [`Frame`] to see if it has a [`Command::PropertyValueIs`] with a [`Property::LastStatus`].
     ///
     /// Returns the [`Status`] if it exists, otherwise `None`.
-    pub fn last_status(&self) -> Option<Status> {
+    pub fn last_status(&self) -> Option<Status<V>> {
         match &self.command {
             Command::PropertyValueIs(prop, value) => {
                 if *prop == Property::LastStatus {
-                    Some(Status::try_from(value[0]).unwrap())
+                    Some(Status::from(PackedU32::decode(value).0))
                 } else {
                     None
                 }
@@ -162,7 +166,7 @@ mod tests {
     #[test]
     fn frame_decode_at_least_two_bytes() {
         let buffer = Bytes::from_static(&[0x01]);
-        let frame = Frame::decode(&buffer);
+        let frame = Frame::<NoVendor>::decode(&buffer);
         assert_eq!(frame, Err(Error::PacketLength(1)));
     }
 }
