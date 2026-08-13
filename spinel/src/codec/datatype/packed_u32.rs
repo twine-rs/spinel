@@ -112,7 +112,7 @@ impl PackedU32 {
 
     /// Get the length of the packed [`u32`] value
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub fn byte_len(&self) -> usize {
         Self::count_bytes(&self.array)
     }
 }
@@ -226,7 +226,7 @@ mod tests {
 
             let result: u32 = test.try_into().unwrap();
             assert_eq!(result, item.unpacked);
-            assert_eq!(test.len(), item.count);
+            assert_eq!(test.byte_len(), item.count);
 
             let result = PackedU32::decode(&item.packed);
             assert_eq!(result.0, item.unpacked);
