@@ -7,9 +7,9 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Jake Swensen"]
 description = "Control networking devices using the Spinel protocol."
+repository = "https://github.com/twine-rs/spinel"
 edition = "2021"
 license = "MPL-2.0"
-license-file = "LICENSE.md"

@@ -3,6 +3,7 @@ name = "spinel"
 version.workspace = true
 authors.workspace = true
 description.workspace = true
+repository.workspace = true
 edition.workspace = true
 license.workspace = true
 
