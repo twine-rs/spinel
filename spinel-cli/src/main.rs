@@ -1,43 +1,5 @@
 use clap::Parser;
-use futures::sink::SinkExt;
-use futures::stream::StreamExt;
-use spinel::{Command, Frame, HdlcCodec, Header, Property};
-use tokio_serial::{SerialPortBuilderExt, SerialStream};
-use tokio_util::codec::{Decoder, Framed};
-
-struct SpinelHost {
-    stream: Framed<SerialStream, HdlcCodec>,
-}
-
-impl SpinelHost {
-    async fn send_frame(&mut self, frame: Frame) {
-        self.stream.send(frame).await.unwrap();
-
-        if let Some(resp) = self.stream.next().await {
-            match resp {
-                Ok(frame) => {
-                    println!("{:?}", frame);
-                }
-                Err(e) => {
-                    eprintln!("{:?}", e);
-                }
-            }
-        }
-    }
-
-    async fn recv_loop(&mut self) {
-        while let Some(frame) = self.stream.next().await {
-            match frame {
-                Ok(frame) => {
-                    println!("{:?}", frame);
-                }
-                Err(e) => {
-                    eprintln!("{:?}", e);
-                }
-            }
-        }
-    }
-}
+use spinel::{PosixSpinelHostHandle, SpinelHostConnection};
 
 /// A CLI tool for interacting with a networking device using the Spinel protocol.
 #[derive(Parser, Debug)]
@@ -58,31 +20,47 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> tokio_serial::Result<()> {
+    env_logger::init();
+
     let args = Args::parse();
 
     let port_name = args.port_name;
     let baud = args.baud_rate;
 
-    let port = tokio_serial::new(&port_name, baud).open_native_async()?;
-    let stream = HdlcCodec.framed(port);
+    let actor = PosixSpinelHostHandle::new_from_serial(&port_name, baud, 0).unwrap();
 
-    let mut host = SpinelHost { stream };
+    actor.noop().await.unwrap();
+    log::trace!("noop successful");
 
-    println!("Receiving data on {port_name} ({baud} baud)");
+    actor.reset().await.unwrap();
+    log::trace!("reset successful");
 
-    let reset_spinel_frame = spinel::Frame::new(Header::new(0, 0), Command::Reset);
-    host.send_frame(reset_spinel_frame).await;
+    let version = actor.controller_version().await.unwrap();
+    log::trace!("controller version: {:?}", version);
 
-    let noop_spinel_frame = spinel::Frame::new(Header::new(0, 2), Command::Noop);
-    host.send_frame(noop_spinel_frame.clone()).await;
+    let mut reset_broadcast_rx = actor.subscribe_reset_msg().await.unwrap();
+    let mut debug_broadcast_rx = actor.subscribe_debug_broadcast().await.unwrap();
+    let mut net_broadcast_rx = actor.subscribe_net_broadcast().await.unwrap();
+    let mut net_insecure_broadcast_rx = actor.subscribe_net_insecure_broadcast().await.unwrap();
+    let mut log_broadcast_rx = actor.subscribe_log_broadcast().await.unwrap();
 
-    let version_frame = spinel::Frame::new(
-        Header::new(0, 1),
-        Command::PropertyValueGet(Property::NcpVersion),
-    );
-    host.send_frame(version_frame).await;
-
-    host.recv_loop().await;
-
-    Ok(())
+    loop {
+        tokio::select! {
+            frame = reset_broadcast_rx.recv() => {
+                log::trace!("reset broadcast received: {:?}", frame);
+            }
+            frame = debug_broadcast_rx.recv() => {
+                log::trace!("debug broadcast received: {:?}", frame);
+            }
+            frame = net_broadcast_rx.recv() => {
+                log::trace!("net broadcast received: {:?}", frame);
+            }
+            frame = net_insecure_broadcast_rx.recv() => {
+                log::trace!("net insecure broadcast received: {:?}", frame);
+            }
+            frame = log_broadcast_rx.recv() => {
+                log::trace!("log broadcast received: {:?}", frame);
+            }
+        }
+    }
 }

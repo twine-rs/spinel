@@ -5,3 +5,4 @@
 *.patch
 Cargo.lock
 debug-serial
+**/.DS_Store

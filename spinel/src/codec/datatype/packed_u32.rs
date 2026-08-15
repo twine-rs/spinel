@@ -9,6 +9,7 @@ use bytes::{BufMut, BytesMut};
 ///
 /// [1] https://www.w3.org/TR/exi/#encodingUnsignedInteger
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PackedU32 {
     /// The packed [`u32`] value.
     pub(crate) array: [u8; 3],
@@ -91,6 +92,17 @@ impl PackedU32 {
         (value, count)
     }
 
+    /// Decode a structurally valid packed [`u32`] value from a byte slice.
+    ///
+    /// Returns the decoded value and number of bytes consumed. Errors if the
+    /// slice does not contain a valid packed integer terminator within the
+    /// protocol's three-byte limit.
+    #[inline]
+    pub fn decode_checked(bytes: &PackedByteSlice) -> Result<(u32, usize), Error> {
+        let packed = Self::try_from(bytes)?;
+        Ok((u32::from(packed), Self::count_bytes(&packed.array)))
+    }
+
     /// Get the expected length of the packed [`u32`] value
     #[inline]
     pub fn packed_len(value: u32) -> usize {
@@ -111,7 +123,7 @@ impl PackedU32 {
 
     /// Get the length of the packed [`u32`] value
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub fn byte_len(&self) -> usize {
         Self::count_bytes(&self.array)
     }
 }
@@ -135,12 +147,12 @@ impl TryFrom<&PackedByteSlice> for PackedU32 {
     fn try_from(bytes: &PackedByteSlice) -> Result<Self, Self::Error> {
         let count = Self::count_bytes(bytes);
 
-        if count > 3 {
+        if count == 0 || count > 3 {
             return Err(Error::PackedU32ByteCount);
         }
 
         let mut array = [0; 3];
-        array.copy_from_slice(&bytes[..count]);
+        array[..count].copy_from_slice(&bytes[..count]);
 
         Ok(PackedU32 { array })
     }
@@ -223,9 +235,9 @@ mod tests {
         for item in TEST_PACK_ARRAY.iter() {
             let test = PackedU32 { array: item.packed };
 
-            let result: u32 = test.try_into().unwrap();
+            let result: u32 = test.into();
             assert_eq!(result, item.unpacked);
-            assert_eq!(test.len(), item.count);
+            assert_eq!(test.byte_len(), item.count);
 
             let result = PackedU32::decode(&item.packed);
             assert_eq!(result.0, item.unpacked);

@@ -1,11 +1,43 @@
 use core::fmt;
 
+use crate::codec::vendor::{NoVendor, Vendor, VendorValue};
+
+const STATUS_OK: u32 = 0;
+const STATUS_FAILURE: u32 = 1;
+const STATUS_UNIMPLEMENTED: u32 = 2;
+const STATUS_INVALID_ARGUMENT: u32 = 3;
+const STATUS_INVALID_STATE: u32 = 4;
+const STATUS_INVALID_COMMAND: u32 = 5;
+const STATUS_INVALID_INTERFACE: u32 = 6;
+const STATUS_INTERNAL_ERROR: u32 = 7;
+const STATUS_SECURITY_ERROR: u32 = 8;
+const STATUS_PARSE_ERROR: u32 = 9;
+const STATUS_IN_PROGRESS: u32 = 10;
+const STATUS_NO_MEMORY: u32 = 11;
+const STATUS_BUSY: u32 = 12;
+const STATUS_PROPERTY_NOT_FOUND: u32 = 13;
+const STATUS_PACKET_DROPPED: u32 = 14;
+const STATUS_EMPTY: u32 = 15;
+const STATUS_COMMAND_TOO_BIG: u32 = 16;
+const STATUS_NO_ACK: u32 = 17;
+const STATUS_CCA_FAILURE: u32 = 18;
+const STATUS_ALREADY: u32 = 19;
+const STATUS_ITEM_NOT_FOUND: u32 = 20;
+const STATUS_INVALID_COMMAND_FOR_PROPERTY: u32 = 21;
+const STATUS_UNKNOWN_NEIGHBOR: u32 = 22;
+const STATUS_NOT_CAPABLE: u32 = 23;
+const STATUS_RESPONSE_TIMEOUT: u32 = 24;
+
 /// Status codes for Spinel commands.
 ///
-/// Status codes sent from the device to the host via [`Property::LastStatus`](crate::codec::Property). Status codes
-/// represent the result of the last command executed by the device.
+/// Status codes are sent from the device to the host via
+/// [`Property::LastStatus`](crate::Property) and represent the result of the
+/// last command executed by the device. Decoding is infallible: an unrecognized
+/// core code that a vendor claims decodes to [`Status::Vendor`], and anything
+/// else to [`Status::Unknown`], so a malformed or newer status never panics.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Status {
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Status<V: Vendor = NoVendor> {
     /// The operation has completed successfully.
     Ok,
 
@@ -80,37 +112,16 @@ pub enum Status {
 
     /// No response received from the remote within the timeout period.
     ResponseTimeout,
+
+    /// A vendor-defined status code.
+    Vendor(V::Status),
+
+    /// A status code that maps to neither a core nor a vendor status; carries
+    /// the raw value.
+    Unknown(u32),
 }
 
-impl Status {
-    const STATUS_OK: u8 = 0;
-    const STATUS_FAILURE: u8 = 1;
-    const STATUS_UNIMPLEMENTED: u8 = 2;
-    const STATUS_INVALID_ARGUMENT: u8 = 3;
-    const STATUS_INVALID_STATE: u8 = 4;
-    const STATUS_INVALID_COMMAND: u8 = 5;
-    const STATUS_INVALID_INTERFACE: u8 = 6;
-    const STATUS_INTERNAL_ERROR: u8 = 7;
-    const STATUS_SECURITY_ERROR: u8 = 8;
-    const STATUS_PARSE_ERROR: u8 = 9;
-    const STATUS_IN_PROGRESS: u8 = 10;
-    const STATUS_NO_MEMORY: u8 = 11;
-    const STATUS_BUSY: u8 = 12;
-    const STATUS_PROPERTY_NOT_FOUND: u8 = 13;
-    const STATUS_PACKET_DROPPED: u8 = 14;
-    const STATUS_EMPTY: u8 = 15;
-    const STATUS_COMMAND_TOO_BIG: u8 = 16;
-    const STATUS_NO_ACK: u8 = 17;
-    const STATUS_CCA_FAILURE: u8 = 18;
-    const STATUS_ALREADY: u8 = 19;
-    const STATUS_ITEM_NOT_FOUND: u8 = 20;
-    const STATUS_INVALID_COMMAND_FOR_PROPERTY: u8 = 21;
-    const STATUS_UNKNOWN_NEIGHBOR: u8 = 22;
-    const STATUS_NOT_CAPABLE: u8 = 23;
-    const STATUS_RESPONSE_TIMEOUT: u8 = 24;
-}
-
-impl fmt::Display for Status {
+impl<V: Vendor> fmt::Display for Status<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Status::Ok => write!(f, "Ok"),
@@ -138,78 +149,86 @@ impl fmt::Display for Status {
             Status::UnknownNeighbor => write!(f, "UnknownNeighbor"),
             Status::NotCapable => write!(f, "NotCapable"),
             Status::ResponseTimeout => write!(f, "ResponseTimeout"),
+            Status::Vendor(v) => write!(f, "Vendor(0x{:04x})", v.id()),
+            Status::Unknown(value) => write!(f, "Unknown(0x{value:04x})"),
         }
     }
 }
 
-impl TryFrom<u8> for Status {
-    type Error = ();
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+impl<V: Vendor> From<u32> for Status<V> {
+    fn from(value: u32) -> Self {
         match value {
-            Self::STATUS_OK => Ok(Self::Ok),
-            Self::STATUS_FAILURE => Ok(Self::Failure),
-            Self::STATUS_UNIMPLEMENTED => Ok(Self::Unimplemented),
-            Self::STATUS_INVALID_ARGUMENT => Ok(Self::InvalidArgument),
-            Self::STATUS_INVALID_STATE => Ok(Self::InvalidState),
-            Self::STATUS_INVALID_COMMAND => Ok(Self::InvalidCommand),
-            Self::STATUS_INVALID_INTERFACE => Ok(Self::InvalidInterface),
-            Self::STATUS_INTERNAL_ERROR => Ok(Self::InternalError),
-            Self::STATUS_SECURITY_ERROR => Ok(Self::SecurityError),
-            Self::STATUS_PARSE_ERROR => Ok(Self::ParseError),
-            Self::STATUS_IN_PROGRESS => Ok(Self::InProgress),
-            Self::STATUS_NO_MEMORY => Ok(Self::NoMemory),
-            Self::STATUS_BUSY => Ok(Self::Busy),
-            Self::STATUS_PROPERTY_NOT_FOUND => Ok(Self::PropertyNotFound),
-            Self::STATUS_PACKET_DROPPED => Ok(Self::PacketDropped),
-            Self::STATUS_EMPTY => Ok(Self::Empty),
-            Self::STATUS_COMMAND_TOO_BIG => Ok(Self::CommandTooBig),
-            Self::STATUS_NO_ACK => Ok(Self::NoAck),
-            Self::STATUS_CCA_FAILURE => Ok(Self::CcaFailure),
-            Self::STATUS_ALREADY => Ok(Self::Already),
-            Self::STATUS_ITEM_NOT_FOUND => Ok(Self::ItemNotFound),
-            Self::STATUS_INVALID_COMMAND_FOR_PROPERTY => Ok(Self::InvalidCommandForProperty),
-            Self::STATUS_UNKNOWN_NEIGHBOR => Ok(Self::UnknownNeighbor),
-            Self::STATUS_NOT_CAPABLE => Ok(Self::NotCapable),
-            Self::STATUS_RESPONSE_TIMEOUT => Ok(Self::ResponseTimeout),
-            _ => Err(()),
+            STATUS_OK => Status::Ok,
+            STATUS_FAILURE => Status::Failure,
+            STATUS_UNIMPLEMENTED => Status::Unimplemented,
+            STATUS_INVALID_ARGUMENT => Status::InvalidArgument,
+            STATUS_INVALID_STATE => Status::InvalidState,
+            STATUS_INVALID_COMMAND => Status::InvalidCommand,
+            STATUS_INVALID_INTERFACE => Status::InvalidInterface,
+            STATUS_INTERNAL_ERROR => Status::InternalError,
+            STATUS_SECURITY_ERROR => Status::SecurityError,
+            STATUS_PARSE_ERROR => Status::ParseError,
+            STATUS_IN_PROGRESS => Status::InProgress,
+            STATUS_NO_MEMORY => Status::NoMemory,
+            STATUS_BUSY => Status::Busy,
+            STATUS_PROPERTY_NOT_FOUND => Status::PropertyNotFound,
+            STATUS_PACKET_DROPPED => Status::PacketDropped,
+            STATUS_EMPTY => Status::Empty,
+            STATUS_COMMAND_TOO_BIG => Status::CommandTooBig,
+            STATUS_NO_ACK => Status::NoAck,
+            STATUS_CCA_FAILURE => Status::CcaFailure,
+            STATUS_ALREADY => Status::Already,
+            STATUS_ITEM_NOT_FOUND => Status::ItemNotFound,
+            STATUS_INVALID_COMMAND_FOR_PROPERTY => Status::InvalidCommandForProperty,
+            STATUS_UNKNOWN_NEIGHBOR => Status::UnknownNeighbor,
+            STATUS_NOT_CAPABLE => Status::NotCapable,
+            STATUS_RESPONSE_TIMEOUT => Status::ResponseTimeout,
+            // Any unassigned code falls through to the vendor, then to Unknown.
+            other => match V::Status::try_from_id(other) {
+                Ok(vendor) => Status::Vendor(vendor),
+                Err(_) => Status::Unknown(other),
+            },
         }
     }
 }
 
-impl From<Status> for u8 {
-    fn from(status: Status) -> u8 {
+impl<V: Vendor> From<Status<V>> for u32 {
+    fn from(status: Status<V>) -> u32 {
         match status {
-            Status::Ok => Status::STATUS_OK,
-            Status::Failure => Status::STATUS_FAILURE,
-            Status::Unimplemented => Status::STATUS_UNIMPLEMENTED,
-            Status::InvalidArgument => Status::STATUS_INVALID_ARGUMENT,
-            Status::InvalidState => Status::STATUS_INVALID_STATE,
-            Status::InvalidCommand => Status::STATUS_INVALID_COMMAND,
-            Status::InvalidInterface => Status::STATUS_INVALID_INTERFACE,
-            Status::InternalError => Status::STATUS_INTERNAL_ERROR,
-            Status::SecurityError => Status::STATUS_SECURITY_ERROR,
-            Status::ParseError => Status::STATUS_PARSE_ERROR,
-            Status::InProgress => Status::STATUS_IN_PROGRESS,
-            Status::NoMemory => Status::STATUS_NO_MEMORY,
-            Status::Busy => Status::STATUS_BUSY,
-            Status::PropertyNotFound => Status::STATUS_PROPERTY_NOT_FOUND,
-            Status::PacketDropped => Status::STATUS_PACKET_DROPPED,
-            Status::Empty => Status::STATUS_EMPTY,
-            Status::CommandTooBig => Status::STATUS_COMMAND_TOO_BIG,
-            Status::NoAck => Status::STATUS_NO_ACK,
-            Status::CcaFailure => Status::STATUS_CCA_FAILURE,
-            Status::Already => Status::STATUS_ALREADY,
-            Status::ItemNotFound => Status::STATUS_ITEM_NOT_FOUND,
-            Status::InvalidCommandForProperty => Status::STATUS_INVALID_COMMAND_FOR_PROPERTY,
-            Status::UnknownNeighbor => Status::STATUS_UNKNOWN_NEIGHBOR,
-            Status::NotCapable => Status::STATUS_NOT_CAPABLE,
-            Status::ResponseTimeout => Status::STATUS_RESPONSE_TIMEOUT,
+            Status::Ok => STATUS_OK,
+            Status::Failure => STATUS_FAILURE,
+            Status::Unimplemented => STATUS_UNIMPLEMENTED,
+            Status::InvalidArgument => STATUS_INVALID_ARGUMENT,
+            Status::InvalidState => STATUS_INVALID_STATE,
+            Status::InvalidCommand => STATUS_INVALID_COMMAND,
+            Status::InvalidInterface => STATUS_INVALID_INTERFACE,
+            Status::InternalError => STATUS_INTERNAL_ERROR,
+            Status::SecurityError => STATUS_SECURITY_ERROR,
+            Status::ParseError => STATUS_PARSE_ERROR,
+            Status::InProgress => STATUS_IN_PROGRESS,
+            Status::NoMemory => STATUS_NO_MEMORY,
+            Status::Busy => STATUS_BUSY,
+            Status::PropertyNotFound => STATUS_PROPERTY_NOT_FOUND,
+            Status::PacketDropped => STATUS_PACKET_DROPPED,
+            Status::Empty => STATUS_EMPTY,
+            Status::CommandTooBig => STATUS_COMMAND_TOO_BIG,
+            Status::NoAck => STATUS_NO_ACK,
+            Status::CcaFailure => STATUS_CCA_FAILURE,
+            Status::Already => STATUS_ALREADY,
+            Status::ItemNotFound => STATUS_ITEM_NOT_FOUND,
+            Status::InvalidCommandForProperty => STATUS_INVALID_COMMAND_FOR_PROPERTY,
+            Status::UnknownNeighbor => STATUS_UNKNOWN_NEIGHBOR,
+            Status::NotCapable => STATUS_NOT_CAPABLE,
+            Status::ResponseTimeout => STATUS_RESPONSE_TIMEOUT,
+            Status::Vendor(vendor) => vendor.id(),
+            Status::Unknown(value) => value,
         }
     }
 }
 
 /// Reasons that a device has reset.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ResetReason {
     PowerOn,
     External,
@@ -223,21 +242,21 @@ pub enum ResetReason {
 }
 
 impl ResetReason {
-    const RESET_POWER_ON: u8 = 112;
-    const RESET_EXTERNAL: u8 = 113;
-    const RESET_SOFTWARE: u8 = 114;
-    const RESET_FAULT: u8 = 115;
-    const RESET_CRASH: u8 = 116;
-    const RESET_ASSERT: u8 = 117;
-    const RESET_OTHER: u8 = 118;
-    const RESET_UNKNOWN: u8 = 119;
-    const RESET_WATCHDOG: u8 = 120;
+    const RESET_POWER_ON: u32 = 112;
+    const RESET_EXTERNAL: u32 = 113;
+    const RESET_SOFTWARE: u32 = 114;
+    const RESET_FAULT: u32 = 115;
+    const RESET_CRASH: u32 = 116;
+    const RESET_ASSERT: u32 = 117;
+    const RESET_OTHER: u32 = 118;
+    const RESET_UNKNOWN: u32 = 119;
+    const RESET_WATCHDOG: u32 = 120;
 }
 
-impl TryFrom<u8> for ResetReason {
+impl TryFrom<u32> for ResetReason {
     type Error = ();
 
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
             Self::RESET_POWER_ON => Ok(Self::PowerOn),
             Self::RESET_EXTERNAL => Ok(Self::External),
@@ -250,5 +269,24 @@ impl TryFrom<u8> for ResetReason {
             Self::RESET_WATCHDOG => Ok(Self::Watchdog),
             _ => Err(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn core_status_round_trips() {
+        for code in 0u32..=24 {
+            let status = Status::<NoVendor>::from(code);
+            assert_eq!(u32::from(status), code);
+        }
+    }
+
+    #[test]
+    fn unknown_status_is_infallible() {
+        assert_eq!(Status::<NoVendor>::from(9999), Status::Unknown(9999));
+        assert_eq!(u32::from(Status::<NoVendor>::Unknown(9999)), 9999);
     }
 }
