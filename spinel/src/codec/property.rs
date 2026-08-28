@@ -8,9 +8,13 @@ const PROP_NCP_VERSION: u32 = 0x02;
 const PROP_INTERFACE_TYPE: u32 = 0x03;
 const PROP_CAPS: u32 = 0x05;
 const PROP_HWADDR: u32 = 0x08;
-const PROP_PHY_TX_POWER: u32 = 0x26;
+const PROP_PHY_ENABLED: u32 = 0x20;
+const PROP_PHY_CHAN: u32 = 0x21;
+const PROP_PHY_TX_POWER: u32 = 0x25;
+const PROP_MAC_PROMISCUOUS_MODE: u32 = 0x38;
 const PROP_STREAM_DEBUG: u32 = 0x70;
-const PROP_STREAM_NET: u32 = 0x71;
+const PROP_STREAM_RAW: u32 = 0x71;
+const PROP_STREAM_NET: u32 = 0x72;
 const PROP_STREAM_NET_INSECURE: u32 = 0x73;
 const PROP_STREAM_LOG: u32 = 0x74;
 
@@ -37,6 +41,13 @@ pub enum PropertyStream {
     Net,
     NetInsecure,
     Log,
+
+    /// Raw, unencapsulated data frames for the underlying radio (e.g. 802.15.4 PSDUs).
+    ///
+    /// Like [`PropertyStream::Net`], this is a streaming property: send a frame with
+    /// [`Command::PropertyValueSet`](crate::Command::PropertyValueSet) and receive frames via
+    /// unsolicited [`Command::PropertyValueIs`](crate::Command::PropertyValueIs) notifications.
+    Raw,
 }
 
 impl fmt::Display for PropertyStream {
@@ -46,6 +57,7 @@ impl fmt::Display for PropertyStream {
             PropertyStream::Net => write!(f, "Net"),
             PropertyStream::NetInsecure => write!(f, "NetInsecure"),
             PropertyStream::Log => write!(f, "Log"),
+            PropertyStream::Raw => write!(f, "Raw"),
         }
     }
 }
@@ -94,8 +106,18 @@ pub enum Property<V: Vendor = NoVendor> {
     /// Typically read-only, but may be writable for some vendor defined circumstances.
     HardwareAddress,
 
+    /// Whether the underlying radio is enabled.
+    PhysicalEnabled,
+
+    /// The channel the radio is currently tuned to.
+    PhysicalChannel,
+
     /// Transmit power of the radio in dBm.
     PhysicalTxPower,
+
+    /// Whether the radio's MAC layer is in promiscuous (monitor) mode, receiving all
+    /// frames rather than just those addressed to it.
+    MacPromiscuousMode,
 
     /// A vendor-defined property.
     Vendor(V::Property),
@@ -111,7 +133,10 @@ impl<V: Vendor> fmt::Display for Property<V> {
             Property::Capabilities => write!(f, "Capabilities"),
             Property::Stream(stream) => write!(f, "{}", stream),
             Property::HardwareAddress => write!(f, "HardwareAddress"),
+            Property::PhysicalEnabled => write!(f, "PhysicalEnabled"),
+            Property::PhysicalChannel => write!(f, "PhysicalChannel"),
             Property::PhysicalTxPower => write!(f, "PhysicalTxPower"),
+            Property::MacPromiscuousMode => write!(f, "MacPromiscuousMode"),
             Property::Vendor(v) => write!(f, "Vendor(0x{:x})", v.id()),
         }
     }
@@ -128,12 +153,16 @@ impl<V: Vendor> Property<V> {
             Property::Capabilities => PROP_CAPS,
             Property::Stream(stream) => match stream {
                 PropertyStream::Debug => PROP_STREAM_DEBUG,
+                PropertyStream::Raw => PROP_STREAM_RAW,
                 PropertyStream::Net => PROP_STREAM_NET,
                 PropertyStream::NetInsecure => PROP_STREAM_NET_INSECURE,
                 PropertyStream::Log => PROP_STREAM_LOG,
             },
             Property::HardwareAddress => PROP_HWADDR,
+            Property::PhysicalEnabled => PROP_PHY_ENABLED,
+            Property::PhysicalChannel => PROP_PHY_CHAN,
             Property::PhysicalTxPower => PROP_PHY_TX_POWER,
+            Property::MacPromiscuousMode => PROP_MAC_PROMISCUOUS_MODE,
             Property::Vendor(v) => v.id(),
         }
     }
@@ -155,11 +184,15 @@ impl<V: Vendor> TryFrom<u32> for Property<V> {
             PROP_INTERFACE_TYPE => Ok(Property::InterfaceType),
             PROP_CAPS => Ok(Property::Capabilities),
             PROP_STREAM_DEBUG => Ok(Property::Stream(PropertyStream::Debug)),
+            PROP_STREAM_RAW => Ok(Property::Stream(PropertyStream::Raw)),
             PROP_STREAM_NET => Ok(Property::Stream(PropertyStream::Net)),
             PROP_STREAM_NET_INSECURE => Ok(Property::Stream(PropertyStream::NetInsecure)),
             PROP_STREAM_LOG => Ok(Property::Stream(PropertyStream::Log)),
             PROP_HWADDR => Ok(Property::HardwareAddress),
+            PROP_PHY_ENABLED => Ok(Property::PhysicalEnabled),
+            PROP_PHY_CHAN => Ok(Property::PhysicalChannel),
             PROP_PHY_TX_POWER => Ok(Property::PhysicalTxPower),
+            PROP_MAC_PROMISCUOUS_MODE => Ok(Property::MacPromiscuousMode),
             // Any unassigned ID falls through to the vendor profile.
             _ => V::Property::try_from_id(id).map(Property::Vendor),
         }
@@ -184,5 +217,43 @@ mod tests {
     fn decode_fails_on_malformed_packed_property_id() {
         let prop = Property::<NoVendor>::try_from(&[0x80][..]);
         assert_eq!(prop, Err(Error::PackedU32ByteCount));
+    }
+
+    #[test]
+    fn core_properties_round_trip() {
+        let properties = [
+            Property::<NoVendor>::LastStatus,
+            Property::ProtocolVersion,
+            Property::NcpVersion,
+            Property::InterfaceType,
+            Property::Capabilities,
+            Property::Stream(PropertyStream::Debug),
+            Property::Stream(PropertyStream::Raw),
+            Property::Stream(PropertyStream::Net),
+            Property::Stream(PropertyStream::NetInsecure),
+            Property::Stream(PropertyStream::Log),
+            Property::HardwareAddress,
+            Property::PhysicalEnabled,
+            Property::PhysicalChannel,
+            Property::PhysicalTxPower,
+            Property::MacPromiscuousMode,
+        ];
+
+        for property in properties {
+            assert_eq!(Property::try_from(property.id()), Ok(property));
+        }
+    }
+
+    /// Pins the wire IDs against the values defined in OpenThread's `spinel.h`, since a
+    /// silent drift here breaks interop with real Spinel hosts/devices without any local
+    /// test noticing (both sides of a round trip would still agree with each other).
+    #[test]
+    fn core_properties_match_spinel_spec() {
+        assert_eq!(Property::<NoVendor>::Stream(PropertyStream::Raw).id(), 0x71);
+        assert_eq!(Property::<NoVendor>::Stream(PropertyStream::Net).id(), 0x72);
+        assert_eq!(Property::<NoVendor>::PhysicalEnabled.id(), 0x20);
+        assert_eq!(Property::<NoVendor>::PhysicalChannel.id(), 0x21);
+        assert_eq!(Property::<NoVendor>::PhysicalTxPower.id(), 0x25);
+        assert_eq!(Property::<NoVendor>::MacPromiscuousMode.id(), 0x38);
     }
 }
