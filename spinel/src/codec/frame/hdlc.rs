@@ -16,6 +16,11 @@ impl<V: Vendor> HdlcLiteFrame<V> {
     const XOFF: u8 = 0x13;
     const VENDOR_SPECIFIC: u8 = 0xF8;
 
+    /// No valid HDLC-Lite frame comes close to this size; a buffer this large without
+    /// yielding a complete frame means the stream has desynced (e.g. line noise with
+    /// no matching delimiter pair) rather than legitimately awaiting more data.
+    const MAX_BUFFER_SIZE: usize = 4096;
+
     /// Check if a byte requires escaping.
     fn requires_escape(byte: u8) -> bool {
         byte == Self::FRAME_DELIMITER_FLAG
@@ -79,23 +84,74 @@ impl<V: Vendor> HdlcLiteFrame<V> {
         Some((first_delimiter_pos, next))
     }
 
+    /// Guard against unbounded accumulation on a desynced stream.
+    ///
+    /// Callers that feed bytes into `buffer` until [`Self::find_frame`] yields a
+    /// complete frame should call this whenever it returns `None`: if `buffer` has
+    /// grown past [`Self::MAX_BUFFER_SIZE`] without completing a frame, the stream
+    /// has desynced rather than legitimately waiting on more bytes. Drops everything
+    /// up through the *last* delimiter seen so far, keeping only whatever trails it
+    /// as the possible start of the next frame, or clears `buffer` entirely if it
+    /// holds no delimiter at all. Using the last (rather than first) delimiter
+    /// guarantees the buffer shrinks back under the size limit in one call, even
+    /// when the leading byte is itself a delimiter. Returns `true` if it discarded
+    /// anything.
+    pub fn resync_if_desynced(buffer: &mut BytesMut) -> bool {
+        if buffer.len() <= Self::MAX_BUFFER_SIZE {
+            return false;
+        }
+
+        match buffer
+            .iter()
+            .rposition(|&byte| byte == Self::FRAME_DELIMITER_FLAG)
+        {
+            Some(index) => {
+                let _ = buffer.split_to(index + 1);
+            }
+            None => buffer.clear(),
+        }
+
+        true
+    }
+
     /// Create a new [`HdlcLiteFrame`] from a standard Spinel [`Frame`].
     pub fn new(frame: Frame<V>) -> Self {
         Self { frame }
     }
 
     /// Encode a [`HdlcLiteFrame`] into a mutable buffer of [`BytesMut`].
-    /// todo: limit?
+    ///
+    /// The CRC is computed over the unescaped frame bytes, then the frame bytes and
+    /// CRC are both escaped as they're written -- any occurrence of a special byte
+    /// (`FRAME_DELIMITER_FLAG`, `ESCAPE_BYTE_FLAG`, `XON`, `XOFF`, `VENDOR_SPECIFIC`)
+    /// inside the frame content or CRC must not be mistaken for real framing, so it's
+    /// replaced with `ESCAPE_BYTE_FLAG` followed by the byte XORed with `0x20` (undone
+    /// by [`Self::decode`]'s unescaping). Only the two flag bytes written directly by
+    /// this function are left unescaped, since those are the real delimiters.
     pub fn encode(self, buffer: &mut BytesMut) -> Result<(), Error> {
-        // todo: check for escape, new BytesMut first then write to input buffer
+        let mut raw = BytesMut::new();
+        self.frame.encode(&mut raw)?;
+
+        let crc = State::<crc16::X_25>::calculate(&raw);
 
         buffer.put_u8(Self::FRAME_DELIMITER_FLAG);
-        self.frame.encode(buffer)?;
-        let crc = State::<crc16::X_25>::calculate(&buffer[1..]);
-        buffer.put_u16_le(crc);
+        Self::put_escaped(buffer, &raw);
+        Self::put_escaped(buffer, &crc.to_le_bytes());
         buffer.put_u8(Self::FRAME_DELIMITER_FLAG);
 
         Ok(())
+    }
+
+    /// Append `data` to `buffer`, escaping any byte that [`Self::requires_escape`].
+    fn put_escaped(buffer: &mut BytesMut, data: &[u8]) {
+        for &byte in data {
+            if Self::requires_escape(byte) {
+                buffer.put_u8(Self::ESCAPE_BYTE_FLAG);
+                buffer.put_u8(byte ^ 0x20);
+            } else {
+                buffer.put_u8(byte);
+            }
+        }
     }
 
     /// Decode a [`HdlcLiteFrame`] from a buffer of [`Bytes`].
@@ -165,8 +221,10 @@ impl<V: Vendor> HdlcLiteFrame<V> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
     use super::*;
     use crate::Property;
+    use crate::PropertyStream;
     use crate::{Command, Header};
     use bytes::Bytes;
     use rand::distributions::Uniform;
@@ -234,6 +292,41 @@ mod tests {
         let result =
             HdlcLiteFrame::<NoVendor>::find_frame(&Bytes::from_iter(bytes.iter().cloned()));
         assert_eq!(result, Some((2, 7)));
+    }
+
+    #[test]
+    fn resync_leaves_small_buffer_untouched() {
+        let mut buffer = BytesMut::from_iter(TEST_REQ_NOOP_ARRAY.iter().cloned());
+        let original = buffer.clone();
+
+        assert!(!HdlcLiteFrame::<NoVendor>::resync_if_desynced(&mut buffer));
+        assert_eq!(buffer, original);
+    }
+
+    #[test]
+    fn resync_drops_through_next_delimiter_once_oversized() {
+        let mut buffer = BytesMut::new();
+        buffer.put_u8(0x7E);
+        buffer.extend(std::iter::repeat_n(
+            0xAAu8,
+            HdlcLiteFrame::<NoVendor>::MAX_BUFFER_SIZE,
+        ));
+        buffer.put_u8(0x7E);
+        buffer.put_u8(0x11);
+
+        assert!(HdlcLiteFrame::<NoVendor>::resync_if_desynced(&mut buffer));
+        assert_eq!(buffer, Bytes::from_static(&[0x11]));
+    }
+
+    #[test]
+    fn resync_clears_buffer_with_no_delimiter() {
+        let mut buffer = BytesMut::from_iter(std::iter::repeat_n(
+            0xAAu8,
+            HdlcLiteFrame::<NoVendor>::MAX_BUFFER_SIZE + 1,
+        ));
+
+        assert!(HdlcLiteFrame::<NoVendor>::resync_if_desynced(&mut buffer));
+        assert!(buffer.is_empty());
     }
 
     #[test]
@@ -333,6 +426,92 @@ mod tests {
             ),
         ));
         assert_eq!(frame, Ok(expected));
+    }
+
+    #[test]
+    fn decode_matches_ziggurat_real_device_capture() {
+        // Bytes lifted verbatim from ziggurat's own
+        // `ziggurat-spinel::test::test_spinel_sending_request`, which their own comment
+        // labels as "taken from a universal-silabs-flasher session with a real device".
+        // Cross-checking our decoder against an independently-verified real capture
+        // (not just our own synthetic fixtures) is the point.
+        const BYTES: [u8; 75] = [
+            0x7e, 0x83, 0x06, 0x02, 0x53, 0x4c, 0x2d, 0x4f, 0x50, 0x45, 0x4e, 0x54, 0x48, 0x52,
+            0x45, 0x41, 0x44, 0x2f, 0x32, 0x2e, 0x34, 0x2e, 0x34, 0x2e, 0x30, 0x5f, 0x47, 0x69,
+            0x74, 0x48, 0x75, 0x62, 0x2d, 0x37, 0x30, 0x37, 0x34, 0x61, 0x34, 0x33, 0x65, 0x34,
+            0x3b, 0x20, 0x45, 0x46, 0x52, 0x33, 0x32, 0x3b, 0x20, 0x4f, 0x63, 0x74, 0x20, 0x32,
+            0x31, 0x20, 0x32, 0x30, 0x32, 0x34, 0x20, 0x31, 0x34, 0x3a, 0x34, 0x30, 0x3a, 0x35,
+            0x37, 0x00, 0x81, 0xf7, 0x7e,
+        ];
+        const VERSION_STR: &str = "SL-OPENTHREAD/2.4.4.0_GitHub-7074a43e4; EFR32; Oct 21 2024 14:40:57\0";
+
+        let frame = HdlcLiteFrame::<NoVendor>::decode(&Bytes::from_static(&BYTES));
+        let expected = HdlcLiteFrame::new(Frame::<NoVendor>::new(
+            Header::new(0x00, 0x03),
+            Command::PropertyValueIs(
+                Property::NcpVersion,
+                Bytes::from_static(VERSION_STR.as_bytes()),
+            ),
+        ));
+        assert_eq!(frame, Ok(expected));
+    }
+
+    #[test]
+    fn encode_escapes_special_bytes_in_payload_and_round_trips() {
+        // A payload containing every byte that requires escaping: the frame delimiter,
+        // the escape byte itself, XON, XOFF, and the vendor-specific byte.
+        let header = Header::new(0x0, 0x1);
+        let cmd = Command::PropertyValueIs(
+            Property::Stream(PropertyStream::Debug),
+            Bytes::from_static(&[0xAA, 0x7E, 0x7D, 0x11, 0x13, 0xF8, 0xBB]),
+        );
+        let frame: Frame<NoVendor> = Frame::new(header.clone(), cmd.clone());
+        let hdlc_frame = HdlcLiteFrame::new(frame);
+
+        let mut buffer = BytesMut::with_capacity(32);
+        hdlc_frame.encode(&mut buffer).unwrap();
+
+        // Every special byte in the encoded body (excluding the two boundary flags)
+        // must be the second half of an escape pair, never bare.
+        let body = &buffer[1..buffer.len() - 1];
+        let mut escaped_next = false;
+        for &byte in body {
+            if escaped_next {
+                escaped_next = false;
+                continue;
+            }
+            if byte == HdlcLiteFrame::<NoVendor>::ESCAPE_BYTE_FLAG {
+                escaped_next = true;
+            } else {
+                assert!(
+                    !HdlcLiteFrame::<NoVendor>::requires_escape(byte),
+                    "bare special byte 0x{byte:02x} found unescaped in encoded frame"
+                );
+            }
+        }
+
+        let decoded = HdlcLiteFrame::<NoVendor>::decode(&buffer.freeze()).unwrap();
+        assert_eq!(decoded, HdlcLiteFrame::new(Frame::new(header, cmd)));
+    }
+
+    #[test]
+    fn encode_escape_matches_ziggurat_test_vector() {
+        // Pins the escape+CRC byte layout against ziggurat's own
+        // `ziggurat-spinel::test::test_hdlc_lite_frame_vectors`, whose second case is
+        // specifically chosen to exercise escaping (the raw data contains both the
+        // frame delimiter and the escape byte): raw `8103367e7d` -> escaped+CRC
+        // `8103367d5e7d5d6af9`.
+        let data = [0x81, 0x03, 0x36, 0x7E, 0x7D];
+        let crc = State::<crc16::X_25>::calculate(&data);
+
+        let mut escaped = BytesMut::new();
+        HdlcLiteFrame::<NoVendor>::put_escaped(&mut escaped, &data);
+        HdlcLiteFrame::<NoVendor>::put_escaped(&mut escaped, &crc.to_le_bytes());
+
+        assert_eq!(
+            &escaped[..],
+            &[0x81, 0x03, 0x36, 0x7D, 0x5E, 0x7D, 0x5D, 0x6A, 0xF9]
+        );
     }
 
     #[test]

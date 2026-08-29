@@ -8,16 +8,25 @@ pub use bytes::{Bytes, BytesMut};
 pub mod codec;
 mod error;
 
+mod connection;
+pub use connection::SpinelHostConnection;
+
+pub mod rcp;
+pub use rcp::{Radio, RcpDevice};
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
-        mod connection;
         pub use codec::HdlcCodec;
-        pub use connection::{SpinelHostConnection, PosixSpinelHostHandle};
+        pub use connection::PosixSpinelHostHandle;
+    } else {
+        pub use connection::EmbeddedSpinelHostConnection;
+        pub use rcp::EmbeddedRcpConnection;
     }
 }
 
 pub use codec::{
     write_caps, Capability, CapabilityIter, Command, Frame, HdlcLiteFrame, Header, MaybeFormat,
-    Never, NoVendor, PackedU32, Property, PropertyStream, ResetReason, Status, Vendor, VendorValue,
+    Never, NoVendor, PackedU32, Property, PropertyStream, RawRxFrame, RawTxFrame, ResetReason,
+    Status, Vendor, VendorValue,
 };
 pub use error::Error;

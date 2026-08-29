@@ -1,6 +1,6 @@
 use crate::codec::vendor::{NoVendor, Vendor};
 use crate::codec::PackedU32;
-use crate::{Command, Error, Property, Status};
+use crate::{Command, Error, Property, PropertyStream, RawRxFrame, Status};
 use bytes::{BufMut, Bytes, BytesMut};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -126,6 +126,20 @@ impl<V: Vendor> Frame<V> {
             _ => None,
         }
     }
+
+    /// Check the [`Frame`] to see if it has a [`Command::PropertyValueIs`] with a
+    /// [`Property::Stream`]([`PropertyStream::Raw`]).
+    ///
+    /// Returns the decoded [`RawRxFrame`] if it exists and decodes successfully,
+    /// otherwise `None`.
+    pub fn stream_raw_frame(&self) -> Option<RawRxFrame> {
+        match &self.command {
+            Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), value) => {
+                RawRxFrame::decode(value).ok()
+            }
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -180,5 +194,46 @@ mod tests {
         );
 
         assert_eq!(frame.last_status(), None);
+    }
+
+    #[test]
+    fn stream_raw_frame_decodes_raw_stream_notification() {
+        let rx_frame = RawRxFrame {
+            psdu: Bytes::from_static(&[0xAA, 0xBB]),
+            rssi: -40,
+            noise_floor: -90,
+            flags: 0,
+            channel: 11,
+            lqi: 100,
+            timestamp_us: 42,
+            receive_error: 0,
+            manufacturer_specific: Bytes::new(),
+        };
+        let frame = Frame::<NoVendor>::new(
+            Header::new(0x0, 0x0),
+            Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), rx_frame.to_bytes()),
+        );
+
+        assert_eq!(frame.stream_raw_frame(), Some(rx_frame));
+    }
+
+    #[test]
+    fn stream_raw_frame_ignores_malformed_payload() {
+        let frame = Frame::<NoVendor>::new(
+            Header::new(0x0, 0x0),
+            Command::PropertyValueIs(
+                Property::Stream(PropertyStream::Raw),
+                Bytes::from_static(&[0xFF]),
+            ),
+        );
+
+        assert_eq!(frame.stream_raw_frame(), None);
+    }
+
+    #[test]
+    fn stream_raw_frame_ignores_unrelated_command() {
+        let frame = Frame::<NoVendor>::new(Header::new(0x1, 0x2), Command::Noop);
+
+        assert_eq!(frame.stream_raw_frame(), None);
     }
 }
