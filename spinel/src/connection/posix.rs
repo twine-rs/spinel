@@ -1,7 +1,7 @@
 use super::SpinelHostConnection;
 use crate::{
     codec::{NoVendor, PackedU32, ResetReason, Status},
-    Command, Error, Frame, HdlcCodec, Header, Property, PropertyStream,
+    Command, Error, Frame, HdlcCodec, Header, Property, PropertyStream, RawTxFrame,
 };
 use bytes::Bytes;
 use core::fmt;
@@ -35,6 +35,11 @@ enum PosixSpinelHostMessage {
     SubscribeNetBroadcast { reply: BroadcastFrameReply },
     SubscribeNetInsecureBroadcast { reply: BroadcastFrameReply },
     SubscribeLogBroadcast { reply: BroadcastFrameReply },
+    TransmitRaw {
+        frame: RawTxFrame,
+        reply: OneshotFrameReply,
+    },
+    SubscribeRawBroadcast { reply: BroadcastFrameReply },
 }
 
 impl fmt::Display for PosixSpinelHostMessage {
@@ -61,6 +66,10 @@ impl fmt::Display for PosixSpinelHostMessage {
             PosixSpinelHostMessage::SubscribeLogBroadcast { .. } => {
                 write!(f, "SubscribeLogBroadcast")
             }
+            PosixSpinelHostMessage::TransmitRaw { .. } => write!(f, "TransmitRaw"),
+            PosixSpinelHostMessage::SubscribeRawBroadcast { .. } => {
+                write!(f, "SubscribeRawBroadcast")
+            }
         }
     }
 }
@@ -72,6 +81,7 @@ enum SubscribeRequest {
     NetBroadcast,
     NetInsecureBroadcast,
     LogBroadcast,
+    RawBroadcast,
 }
 
 #[derive(Clone, Debug)]
@@ -114,6 +124,7 @@ impl PosixSpinelHostHandle {
             net_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
             net_insecure_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
             log_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
+            raw_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
         };
 
         host_connection.run();
@@ -144,6 +155,9 @@ impl PosixSpinelHostHandle {
             }
             SubscribeRequest::LogBroadcast => {
                 PosixSpinelHostMessage::SubscribeLogBroadcast { reply: sender }
+            }
+            SubscribeRequest::RawBroadcast => {
+                PosixSpinelHostMessage::SubscribeRawBroadcast { reply: sender }
             }
         };
         self.transaction
@@ -178,6 +192,32 @@ impl PosixSpinelHostHandle {
     pub async fn subscribe_log_broadcast(&self) -> Result<Receiver<Frame>, Error> {
         self.send_subscribe_request(SubscribeRequest::LogBroadcast)
             .await
+    }
+
+    /// Subscribe to raw 802.15.4 frames received by the radio.
+    pub async fn subscribe_raw_broadcast(&self) -> Result<Receiver<Frame>, Error> {
+        self.send_subscribe_request(SubscribeRequest::RawBroadcast)
+            .await
+    }
+
+    /// Transmit a raw 802.15.4 frame through the radio.
+    pub async fn transmit_raw(&self, frame: &RawTxFrame) -> Result<(), Error> {
+        let (sender, receiver) = oneshot::channel();
+
+        self.transaction
+            .send(PosixSpinelHostMessage::TransmitRaw {
+                frame: frame.clone(),
+                reply: sender,
+            })
+            .map_err(|_| Error::HostConnectionSend)?;
+
+        let response = receiver.await??.await.map_err(Error::from)?;
+
+        match response.last_status() {
+            Some(Status::Ok) => Ok(()),
+            Some(status) => Err(Error::Status(u32::from(status))),
+            None => Err(Error::UnexpectedResponse(response.command().id())),
+        }
     }
 
     async fn send_reset(&self) -> Result<(), Error> {
@@ -296,6 +336,7 @@ struct PosixSpinelHost {
     net_broadcast: broadcast::Sender<Frame>,
     net_insecure_broadcast: broadcast::Sender<Frame>,
     log_broadcast: broadcast::Sender<Frame>,
+    raw_broadcast: broadcast::Sender<Frame>,
 }
 
 impl PosixSpinelHost {
@@ -346,6 +387,9 @@ impl PosixSpinelHost {
                                         }
                                         Command::PropertyValueIs(Property::Stream(PropertyStream::Log), _) => {
                                             let _ = self.log_broadcast.send(frame);
+                                        }
+                                        Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), _) => {
+                                            let _ = self.raw_broadcast.send(frame);
                                         }
                                         _ => {
                                             log::error!("Unknown broadcast message: {}", frame.command());
@@ -408,6 +452,20 @@ impl PosixSpinelHost {
             }
             PosixSpinelHostMessage::SubscribeLogBroadcast { reply } => {
                 let rx = self.log_broadcast.subscribe();
+                let _send_frame_res = reply.send(Ok(rx));
+            }
+            PosixSpinelHostMessage::TransmitRaw { frame, reply } => {
+                self.send_request(
+                    Command::PropertyValueSet(
+                        Property::Stream(PropertyStream::Raw),
+                        frame.to_bytes(),
+                    ),
+                    reply,
+                )
+                .await;
+            }
+            PosixSpinelHostMessage::SubscribeRawBroadcast { reply } => {
+                let rx = self.raw_broadcast.subscribe();
                 let _send_frame_res = reply.send(Ok(rx));
             }
         };
@@ -530,5 +588,124 @@ mod tests {
             PosixSpinelHost::find_free_tid(1, &lut),
             Err(Error::TransactionIdsExhausted)
         );
+    }
+
+    // Integration tests below exercise `PosixSpinelHost` through a real (in-memory) PTY
+    // pair instead of mocking the actor, so the encode/decode/dispatch loop is covered
+    // end to end. One end is handed to the actor exactly as `new_from_serial` would; the
+    // other end is wrapped as a "fake device" harness the test drives directly.
+    use crate::RawRxFrame;
+
+    fn spawn_test_host(port: SerialStream, iid: u8) -> PosixSpinelHostHandle {
+        let (handle_tx, handle_rx) = mpsc::unbounded_channel();
+        let stream = HdlcCodec::<NoVendor>::default().framed(port);
+
+        PosixSpinelHost {
+            msg: handle_rx,
+            stream,
+            iid,
+            tid: TID_START,
+            lut: HashMap::new(),
+            reset_broadcast: broadcast::channel(PosixSpinelHostHandle::DEFAULT_BROADCAST_CAPACITY)
+                .0,
+            debug_broadcast: broadcast::channel(PosixSpinelHostHandle::DEFAULT_BROADCAST_CAPACITY)
+                .0,
+            net_broadcast: broadcast::channel(PosixSpinelHostHandle::DEFAULT_BROADCAST_CAPACITY).0,
+            net_insecure_broadcast: broadcast::channel(
+                PosixSpinelHostHandle::DEFAULT_BROADCAST_CAPACITY,
+            )
+            .0,
+            log_broadcast: broadcast::channel(PosixSpinelHostHandle::DEFAULT_BROADCAST_CAPACITY).0,
+            raw_broadcast: broadcast::channel(PosixSpinelHostHandle::DEFAULT_BROADCAST_CAPACITY).0,
+        }
+        .run();
+
+        PosixSpinelHostHandle {
+            transaction: handle_tx,
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn transmit_raw_returns_ok_on_last_status_ok() {
+        let (host_port, device_port) = SerialStream::pair().unwrap();
+        let handle = spawn_test_host(host_port, 0);
+        let mut harness = HdlcCodec::<NoVendor>::default().framed(device_port);
+
+        let tx_frame = RawTxFrame::new(Bytes::from_static(&[0xDE, 0xAD, 0xBE, 0xEF]));
+        let expected_payload = tx_frame.to_bytes();
+
+        let client = tokio::spawn(async move { handle.transmit_raw(&tx_frame).await });
+
+        let request = harness.next().await.unwrap().unwrap();
+        assert_eq!(
+            request.command(),
+            Command::PropertyValueSet(Property::Stream(PropertyStream::Raw), expected_payload)
+        );
+
+        harness
+            .send(Frame::new(request.header(), Command::last_status(Status::Ok)))
+            .await
+            .unwrap();
+
+        assert_eq!(client.await.unwrap(), Ok(()));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn transmit_raw_returns_status_error_on_non_ok_last_status() {
+        let (host_port, device_port) = SerialStream::pair().unwrap();
+        let handle = spawn_test_host(host_port, 0);
+        let mut harness = HdlcCodec::<NoVendor>::default().framed(device_port);
+
+        let tx_frame = RawTxFrame::new(Bytes::from_static(&[0xAA]));
+        let client = tokio::spawn(async move { handle.transmit_raw(&tx_frame).await });
+
+        let request = harness.next().await.unwrap().unwrap();
+        harness
+            .send(Frame::new(
+                request.header(),
+                Command::last_status(Status::Busy),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            client.await.unwrap(),
+            Err(Error::Status(u32::from(Status::<NoVendor>::Busy)))
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn subscribe_raw_broadcast_receives_unsolicited_frame() {
+        let (host_port, device_port) = SerialStream::pair().unwrap();
+        let handle = spawn_test_host(host_port, 0);
+        let mut harness = HdlcCodec::<NoVendor>::default().framed(device_port);
+
+        let mut raw_rx = handle.subscribe_raw_broadcast().await.unwrap();
+
+        let rx_frame = RawRxFrame {
+            psdu: Bytes::from_static(&[0x01, 0x02]),
+            rssi: -50,
+            noise_floor: -90,
+            flags: 0,
+            channel: 15,
+            lqi: 100,
+            timestamp_us: 12_345,
+            receive_error: 0,
+            manufacturer_specific: Bytes::new(),
+        };
+
+        harness
+            .send(Frame::new(
+                Header::new(0, 0),
+                Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), rx_frame.to_bytes()),
+            ))
+            .await
+            .unwrap();
+
+        let received = raw_rx.recv().await.unwrap();
+        assert_eq!(received.stream_raw_frame(), Some(rx_frame));
     }
 }

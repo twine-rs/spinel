@@ -1,5 +1,8 @@
 use crate::codec::NoVendor;
-use crate::{Command, Error, Frame, HdlcLiteFrame, Header, Property};
+use crate::{
+    Command, Error, Frame, HdlcLiteFrame, Header, Property, PropertyStream, RawRxFrame,
+    RawTxFrame,
+};
 use bytes::BytesMut;
 use embedded_io_async::{Read, Write};
 
@@ -136,6 +139,40 @@ where
         match response.command() {
             Command::PropertyValueIs(Property::NcpVersion, value) => Ok(value),
             _ => Err(Error::UnexpectedResponse(cmd_id)),
+        }
+    }
+
+    /// Transmit a raw 802.15.4 frame through the radio.
+    pub async fn transmit_raw(&mut self, frame: &RawTxFrame) -> Result<(), Error> {
+        let response = self
+            .request(Command::PropertyValueSet(
+                Property::Stream(PropertyStream::Raw),
+                frame.to_bytes(),
+            ))
+            .await?;
+
+        match response.last_status() {
+            Some(crate::Status::Ok) => Ok(()),
+            Some(status) => Err(Error::Status(u32::from(status))),
+            None => Err(Error::UnexpectedResponse(response.command().id())),
+        }
+    }
+
+    /// Wait for the next unsolicited raw 802.15.4 frame from the radio.
+    ///
+    /// Like [`request`](Self::request), any frame received in the meantime that doesn't
+    /// match what's being waited for (a solicited response to some other in-flight
+    /// request, an unsolicited reset, or a `STREAM_DEBUG`/`STREAM_NET`/`STREAM_LOG`
+    /// broadcast, or a malformed raw-stream payload) is dropped -- see the type-level docs.
+    pub async fn receive_raw(&mut self) -> Result<RawRxFrame, Error> {
+        loop {
+            let frame = self.recv_frame().await?;
+            if frame.header().tid() != 0 {
+                continue;
+            }
+            if let Some(rx_frame) = frame.stream_raw_frame() {
+                return Ok(rx_frame);
+            }
         }
     }
 }
