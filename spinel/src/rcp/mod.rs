@@ -10,6 +10,22 @@
 //! interrupt handler, a synchronous poll loop, or a unit test). Radio-facing property
 //! access is dispatched through the [`Radio`] trait, which callers implement against
 //! whatever hardware they target.
+//!
+//! [`EmbeddedRcpConnection`] is the transport-bound counterpart, for firmware that
+//! *does* want the UART pump (HDLC framing, request/reply dispatch, unsolicited raw-rx
+//! delivery) handled for it, the same way [`EmbeddedSpinelHostConnection`](crate::connection::EmbeddedSpinelHostConnection)
+//! does on the host side.
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "std")] {
+        // `EmbeddedRcpConnection` builds on `embedded_io_async` and relies on
+        // `Error::Io`'s `not(std)` payload type (see `error.rs`); it's only compiled
+        // in the same `not(std)` configuration `EmbeddedSpinelHostConnection` is.
+    } else {
+        mod embedded;
+        pub use embedded::EmbeddedRcpConnection;
+    }
+}
 
 use crate::{
     Command, Frame, Header, PackedU32, Property, PropertyStream, RawRxFrame, RawTxFrame,

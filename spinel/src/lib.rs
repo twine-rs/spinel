@@ -20,6 +20,7 @@ cfg_if::cfg_if! {
         pub use connection::PosixSpinelHostHandle;
     } else {
         pub use connection::EmbeddedSpinelHostConnection;
+        pub use rcp::EmbeddedRcpConnection;
     }
 }
 
