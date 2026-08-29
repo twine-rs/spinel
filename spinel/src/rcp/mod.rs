@@ -11,7 +11,10 @@
 //! access is dispatched through the [`Radio`] trait, which callers implement against
 //! whatever hardware they target.
 
-use crate::{Command, Frame, Header, PackedU32, Property, PropertyStream, ResetReason, Status};
+use crate::{
+    Command, Frame, Header, PackedU32, Property, PropertyStream, RawRxFrame, RawTxFrame,
+    ResetReason, Status,
+};
 use bytes::Bytes;
 
 /// Hardware/radio operations [`RcpDevice`] dispatches PHY/MAC property access to.
@@ -107,12 +110,25 @@ impl<R: Radio> RcpDevice<R> {
     /// messages that are not a response to a specific request.
     pub fn poll_raw_rx(&mut self, buf: &mut [u8]) -> Option<Frame> {
         let n = self.radio.try_receive(buf)?;
+
+        // `rssi`/`noise_floor`/`lqi`/`timestamp_us` are placeholder zeros: `Radio::try_receive`
+        // only exposes the received bytes today, not per-frame radio metadata. `channel` is
+        // real, read from the radio itself.
+        let rx_frame = RawRxFrame {
+            psdu: Bytes::copy_from_slice(&buf[..n]),
+            rssi: 0,
+            noise_floor: 0,
+            flags: 0,
+            channel: self.radio.channel(),
+            lqi: 0,
+            timestamp_us: 0,
+            receive_error: 0,
+            manufacturer_specific: Bytes::new(),
+        };
+
         Some(Frame::new(
             Header::new(self.iid, 0),
-            Command::PropertyValueIs(
-                Property::Stream(PropertyStream::Raw),
-                Bytes::copy_from_slice(&buf[..n]),
-            ),
+            Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), rx_frame.to_bytes()),
         ))
     }
 
@@ -149,7 +165,13 @@ impl<R: Radio> RcpDevice<R> {
             Property::MacPromiscuousMode => {
                 decode_bool(&value).and_then(|v| self.radio.set_promiscuous(v))
             }
-            Property::Stream(PropertyStream::Raw) => self.radio.transmit(&value),
+            // The optional transmit parameters (channel override, CSMA, retries, tx
+            // power, ...) are accepted -- so a real caller sending them doesn't get a
+            // parse error -- but not yet acted on: `Radio::transmit` has no per-call
+            // parameter surface today.
+            Property::Stream(PropertyStream::Raw) => RawTxFrame::decode(&value)
+                .map_err(|_| Status::ParseError)
+                .and_then(|tx| self.radio.transmit(&tx.psdu)),
             _ => Err(Status::PropertyNotFound),
         };
 
@@ -337,15 +359,28 @@ mod tests {
     #[test]
     fn raw_stream_set_transmits_and_confirms_via_status() {
         let mut device = RcpDevice::new(MockRadio::default(), 0);
-        let payload = Bytes::from_static(&[0x01, 0x02, 0x03]);
+        let psdu = Bytes::from_static(&[0x01, 0x02, 0x03]);
+        let tx_frame = RawTxFrame::new(psdu.clone());
 
         let reply = device.handle_frame(request(Command::PropertyValueSet(
             Property::Stream(PropertyStream::Raw),
-            payload.clone(),
+            tx_frame.to_bytes(),
         )));
 
         assert_eq!(reply.last_status(), Some(Status::Ok));
-        assert_eq!(device.radio().transmitted, Some(payload));
+        assert_eq!(device.radio().transmitted, Some(psdu));
+    }
+
+    #[test]
+    fn raw_stream_set_reports_parse_error_on_malformed_frame() {
+        let mut device = RcpDevice::new(MockRadio::default(), 0);
+
+        let reply = device.handle_frame(request(Command::PropertyValueSet(
+            Property::Stream(PropertyStream::Raw),
+            Bytes::from_static(&[0xFF]),
+        )));
+
+        assert_eq!(reply.last_status(), Some(Status::ParseError));
     }
 
     #[test]
@@ -358,13 +393,10 @@ mod tests {
 
         assert_eq!(frame.header().iid(), 3);
         assert_eq!(frame.header().tid(), 0);
-        assert_eq!(
-            frame.command(),
-            Command::PropertyValueIs(
-                Property::Stream(PropertyStream::Raw),
-                Bytes::from_static(&[0xAB, 0xCD])
-            )
-        );
+
+        let rx_frame = frame.stream_raw_frame().expect("raw rx frame");
+        assert_eq!(rx_frame.psdu, Bytes::from_static(&[0xAB, 0xCD]));
+        assert_eq!(rx_frame.channel, device.radio().channel());
 
         assert!(device.poll_raw_rx(&mut buf).is_none());
     }
