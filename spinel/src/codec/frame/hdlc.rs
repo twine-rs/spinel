@@ -120,17 +120,38 @@ impl<V: Vendor> HdlcLiteFrame<V> {
     }
 
     /// Encode a [`HdlcLiteFrame`] into a mutable buffer of [`BytesMut`].
-    /// todo: limit?
+    ///
+    /// The CRC is computed over the unescaped frame bytes, then the frame bytes and
+    /// CRC are both escaped as they're written -- any occurrence of a special byte
+    /// (`FRAME_DELIMITER_FLAG`, `ESCAPE_BYTE_FLAG`, `XON`, `XOFF`, `VENDOR_SPECIFIC`)
+    /// inside the frame content or CRC must not be mistaken for real framing, so it's
+    /// replaced with `ESCAPE_BYTE_FLAG` followed by the byte XORed with `0x20` (undone
+    /// by [`Self::decode`]'s unescaping). Only the two flag bytes written directly by
+    /// this function are left unescaped, since those are the real delimiters.
     pub fn encode(self, buffer: &mut BytesMut) -> Result<(), Error> {
-        // todo: check for escape, new BytesMut first then write to input buffer
+        let mut raw = BytesMut::new();
+        self.frame.encode(&mut raw)?;
+
+        let crc = State::<crc16::X_25>::calculate(&raw);
 
         buffer.put_u8(Self::FRAME_DELIMITER_FLAG);
-        self.frame.encode(buffer)?;
-        let crc = State::<crc16::X_25>::calculate(&buffer[1..]);
-        buffer.put_u16_le(crc);
+        Self::put_escaped(buffer, &raw);
+        Self::put_escaped(buffer, &crc.to_le_bytes());
         buffer.put_u8(Self::FRAME_DELIMITER_FLAG);
 
         Ok(())
+    }
+
+    /// Append `data` to `buffer`, escaping any byte that [`Self::requires_escape`].
+    fn put_escaped(buffer: &mut BytesMut, data: &[u8]) {
+        for &byte in data {
+            if Self::requires_escape(byte) {
+                buffer.put_u8(Self::ESCAPE_BYTE_FLAG);
+                buffer.put_u8(byte ^ 0x20);
+            } else {
+                buffer.put_u8(byte);
+            }
+        }
     }
 
     /// Decode a [`HdlcLiteFrame`] from a buffer of [`Bytes`].
@@ -200,8 +221,10 @@ impl<V: Vendor> HdlcLiteFrame<V> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
     use super::*;
     use crate::Property;
+    use crate::PropertyStream;
     use crate::{Command, Header};
     use bytes::Bytes;
     use rand::distributions::Uniform;
@@ -431,6 +454,64 @@ mod tests {
             ),
         ));
         assert_eq!(frame, Ok(expected));
+    }
+
+    #[test]
+    fn encode_escapes_special_bytes_in_payload_and_round_trips() {
+        // A payload containing every byte that requires escaping: the frame delimiter,
+        // the escape byte itself, XON, XOFF, and the vendor-specific byte.
+        let header = Header::new(0x0, 0x1);
+        let cmd = Command::PropertyValueIs(
+            Property::Stream(PropertyStream::Debug),
+            Bytes::from_static(&[0xAA, 0x7E, 0x7D, 0x11, 0x13, 0xF8, 0xBB]),
+        );
+        let frame: Frame<NoVendor> = Frame::new(header.clone(), cmd.clone());
+        let hdlc_frame = HdlcLiteFrame::new(frame);
+
+        let mut buffer = BytesMut::with_capacity(32);
+        hdlc_frame.encode(&mut buffer).unwrap();
+
+        // Every special byte in the encoded body (excluding the two boundary flags)
+        // must be the second half of an escape pair, never bare.
+        let body = &buffer[1..buffer.len() - 1];
+        let mut escaped_next = false;
+        for &byte in body {
+            if escaped_next {
+                escaped_next = false;
+                continue;
+            }
+            if byte == HdlcLiteFrame::<NoVendor>::ESCAPE_BYTE_FLAG {
+                escaped_next = true;
+            } else {
+                assert!(
+                    !HdlcLiteFrame::<NoVendor>::requires_escape(byte),
+                    "bare special byte 0x{byte:02x} found unescaped in encoded frame"
+                );
+            }
+        }
+
+        let decoded = HdlcLiteFrame::<NoVendor>::decode(&buffer.freeze()).unwrap();
+        assert_eq!(decoded, HdlcLiteFrame::new(Frame::new(header, cmd)));
+    }
+
+    #[test]
+    fn encode_escape_matches_ziggurat_test_vector() {
+        // Pins the escape+CRC byte layout against ziggurat's own
+        // `ziggurat-spinel::test::test_hdlc_lite_frame_vectors`, whose second case is
+        // specifically chosen to exercise escaping (the raw data contains both the
+        // frame delimiter and the escape byte): raw `8103367e7d` -> escaped+CRC
+        // `8103367d5e7d5d6af9`.
+        let data = [0x81, 0x03, 0x36, 0x7E, 0x7D];
+        let crc = State::<crc16::X_25>::calculate(&data);
+
+        let mut escaped = BytesMut::new();
+        HdlcLiteFrame::<NoVendor>::put_escaped(&mut escaped, &data);
+        HdlcLiteFrame::<NoVendor>::put_escaped(&mut escaped, &crc.to_le_bytes());
+
+        assert_eq!(
+            &escaped[..],
+            &[0x81, 0x03, 0x36, 0x7D, 0x5E, 0x7D, 0x5D, 0x6A, 0xF9]
+        );
     }
 
     #[test]
