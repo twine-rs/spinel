@@ -8,11 +8,15 @@ pub use bytes::{Bytes, BytesMut};
 pub mod codec;
 mod error;
 
+mod connection;
+pub use connection::SpinelHostConnection;
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
-        mod connection;
         pub use codec::HdlcCodec;
-        pub use connection::{SpinelHostConnection, PosixSpinelHostHandle};
+        pub use connection::PosixSpinelHostHandle;
+    } else {
+        pub use connection::EmbeddedSpinelHostConnection;
     }
 }
 
