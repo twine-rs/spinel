@@ -105,6 +105,7 @@ where
                 return Err(Error::Io(()));
             }
             self.rx.extend_from_slice(&chunk[..n]);
+            HdlcLiteFrame::<NoVendor>::resync_if_desynced(&mut self.rx);
         }
     }
 

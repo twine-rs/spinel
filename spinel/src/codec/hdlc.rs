@@ -55,6 +55,10 @@ impl<V: Vendor> Decoder for HdlcCodec<V> {
             };
         }
 
+        if HdlcLiteFrame::<V>::resync_if_desynced(src) {
+            log::warn!("HDLC stream desynced without a complete frame; resyncing");
+        }
+
         Ok(None)
     }
 }

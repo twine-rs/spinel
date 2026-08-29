@@ -16,6 +16,11 @@ impl<V: Vendor> HdlcLiteFrame<V> {
     const XOFF: u8 = 0x13;
     const VENDOR_SPECIFIC: u8 = 0xF8;
 
+    /// No valid HDLC-Lite frame comes close to this size; a buffer this large without
+    /// yielding a complete frame means the stream has desynced (e.g. line noise with
+    /// no matching delimiter pair) rather than legitimately awaiting more data.
+    const MAX_BUFFER_SIZE: usize = 4096;
+
     /// Check if a byte requires escaping.
     fn requires_escape(byte: u8) -> bool {
         byte == Self::FRAME_DELIMITER_FLAG
@@ -77,6 +82,36 @@ impl<V: Vendor> HdlcLiteFrame<V> {
         let next = next_delimiter_pos?;
 
         Some((first_delimiter_pos, next))
+    }
+
+    /// Guard against unbounded accumulation on a desynced stream.
+    ///
+    /// Callers that feed bytes into `buffer` until [`Self::find_frame`] yields a
+    /// complete frame should call this whenever it returns `None`: if `buffer` has
+    /// grown past [`Self::MAX_BUFFER_SIZE`] without completing a frame, the stream
+    /// has desynced rather than legitimately waiting on more bytes. Drops everything
+    /// up through the *last* delimiter seen so far, keeping only whatever trails it
+    /// as the possible start of the next frame, or clears `buffer` entirely if it
+    /// holds no delimiter at all. Using the last (rather than first) delimiter
+    /// guarantees the buffer shrinks back under the size limit in one call, even
+    /// when the leading byte is itself a delimiter. Returns `true` if it discarded
+    /// anything.
+    pub fn resync_if_desynced(buffer: &mut BytesMut) -> bool {
+        if buffer.len() <= Self::MAX_BUFFER_SIZE {
+            return false;
+        }
+
+        match buffer
+            .iter()
+            .rposition(|&byte| byte == Self::FRAME_DELIMITER_FLAG)
+        {
+            Some(index) => {
+                let _ = buffer.split_to(index + 1);
+            }
+            None => buffer.clear(),
+        }
+
+        true
     }
 
     /// Create a new [`HdlcLiteFrame`] from a standard Spinel [`Frame`].
@@ -234,6 +269,41 @@ mod tests {
         let result =
             HdlcLiteFrame::<NoVendor>::find_frame(&Bytes::from_iter(bytes.iter().cloned()));
         assert_eq!(result, Some((2, 7)));
+    }
+
+    #[test]
+    fn resync_leaves_small_buffer_untouched() {
+        let mut buffer = BytesMut::from_iter(TEST_REQ_NOOP_ARRAY.iter().cloned());
+        let original = buffer.clone();
+
+        assert!(!HdlcLiteFrame::<NoVendor>::resync_if_desynced(&mut buffer));
+        assert_eq!(buffer, original);
+    }
+
+    #[test]
+    fn resync_drops_through_next_delimiter_once_oversized() {
+        let mut buffer = BytesMut::new();
+        buffer.put_u8(0x7E);
+        buffer.extend(std::iter::repeat_n(
+            0xAAu8,
+            HdlcLiteFrame::<NoVendor>::MAX_BUFFER_SIZE,
+        ));
+        buffer.put_u8(0x7E);
+        buffer.put_u8(0x11);
+
+        assert!(HdlcLiteFrame::<NoVendor>::resync_if_desynced(&mut buffer));
+        assert_eq!(buffer, Bytes::from_static(&[0x11]));
+    }
+
+    #[test]
+    fn resync_clears_buffer_with_no_delimiter() {
+        let mut buffer = BytesMut::from_iter(std::iter::repeat_n(
+            0xAAu8,
+            HdlcLiteFrame::<NoVendor>::MAX_BUFFER_SIZE + 1,
+        ));
+
+        assert!(HdlcLiteFrame::<NoVendor>::resync_if_desynced(&mut buffer));
+        assert!(buffer.is_empty());
     }
 
     #[test]
