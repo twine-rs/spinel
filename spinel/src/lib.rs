@@ -11,6 +11,9 @@ mod error;
 mod connection;
 pub use connection::SpinelHostConnection;
 
+pub mod rcp;
+pub use rcp::{Radio, RcpDevice};
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
         pub use codec::HdlcCodec;
