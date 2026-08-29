@@ -53,6 +53,8 @@ pub enum Error {
     Status(u32),
     #[error("Target sent an unexpected response for command: {0}")]
     UnexpectedResponse(u32),
+    #[error("All transaction IDs are awaiting a response")]
+    TransactionIdsExhausted,
 }
 
 // Manual impl instead of `#[derive(defmt::Format)]`: `core::str::Utf8Error` (inside
@@ -78,6 +80,7 @@ impl defmt::Format for Error {
             Error::SerialConfig => defmt::write!(fmt, "SerialConfig"),
             Error::Status(v) => defmt::write!(fmt, "Status({})", v),
             Error::UnexpectedResponse(v) => defmt::write!(fmt, "UnexpectedResponse({})", v),
+            Error::TransactionIdsExhausted => defmt::write!(fmt, "TransactionIdsExhausted"),
         }
     }
 }

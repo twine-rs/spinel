@@ -420,14 +420,24 @@ impl PosixSpinelHost {
         reply: oneshot::Sender<Result<oneshot::Receiver<Frame>, Error>>,
     ) {
         log::trace!("Sending request: {cmd:?}");
-        let frame = Frame::new(Header::new(self.iid, self.tid), cmd);
+
+        let tid = match Self::find_free_tid(self.tid, &self.lut) {
+            Ok(tid) => tid,
+            Err(e) => {
+                log::error!("Request error: {e:?}");
+                let _ = reply.send(Err(e));
+                return;
+            }
+        };
+
+        let frame = Frame::new(Header::new(self.iid, tid), cmd);
 
         match self.send_frame(frame).await {
             Ok(_) => {
                 let (send, recv) = oneshot::channel::<Frame>();
                 let _ = reply.send(Ok(recv));
-                self.lut.insert(self.tid, send);
-                self.increment_tid();
+                self.lut.insert(tid, send);
+                self.tid = Self::next_tid(tid);
             }
             Err(e) => {
                 log::error!("Request error: {e:?}");
@@ -445,18 +455,80 @@ impl PosixSpinelHost {
             .map_err(|e| Error::Io(e.to_string()))
     }
 
-    /// Increase the TID by one, wrapping around to 1 if the maximum value is reached.
-    fn increment_tid(&mut self) {
-        if self.tid == 15 {
-            self.tid = TID_START;
+    /// Wrap a TID to the next value in `1..=15`, the range of non-reserved TIDs.
+    fn next_tid(tid: u8) -> u8 {
+        if tid == 15 {
+            TID_START
         } else {
-            self.tid += 1;
+            tid + 1
         }
+    }
+
+    /// Find the next TID, starting from `start`, that isn't a key of `in_flight`.
+    ///
+    /// Reusing a TID that is still awaiting a response would let a stale entry
+    /// answer the new request (or vice versa), leaving one of the two callers
+    /// waiting on a response that never comes.
+    fn find_free_tid(
+        start: u8,
+        in_flight: &HashMap<u8, oneshot::Sender<Frame>>,
+    ) -> Result<u8, Error> {
+        let mut tid = start;
+
+        for _ in 0..15 {
+            if !in_flight.contains_key(&tid) {
+                return Ok(tid);
+            }
+            tid = Self::next_tid(tid);
+        }
+
+        Err(Error::TransactionIdsExhausted)
     }
 
     /// Reset the TID and clear out the lookup table.
     fn reset_tid(&mut self) {
         self.tid = TID_START;
         self.lut.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn in_flight(tids: &[u8]) -> HashMap<u8, oneshot::Sender<Frame>> {
+        tids.iter()
+            .map(|&tid| {
+                let (tx, _rx) = oneshot::channel();
+                (tid, tx)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn find_free_tid_returns_start_when_free() {
+        let lut = in_flight(&[]);
+        assert_eq!(PosixSpinelHost::find_free_tid(1, &lut), Ok(1));
+    }
+
+    #[test]
+    fn find_free_tid_skips_in_flight_tids() {
+        let lut = in_flight(&[1, 2, 3]);
+        assert_eq!(PosixSpinelHost::find_free_tid(1, &lut), Ok(4));
+    }
+
+    #[test]
+    fn find_free_tid_wraps_around() {
+        let lut = in_flight(&[15, 1, 2]);
+        assert_eq!(PosixSpinelHost::find_free_tid(15, &lut), Ok(3));
+    }
+
+    #[test]
+    fn find_free_tid_fails_when_all_in_flight() {
+        let lut = in_flight(&(1..=15).collect::<Vec<_>>());
+        assert_eq!(
+            PosixSpinelHost::find_free_tid(1, &lut),
+            Err(Error::TransactionIdsExhausted)
+        );
     }
 }
