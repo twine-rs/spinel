@@ -406,6 +406,34 @@ mod tests {
     }
 
     #[test]
+    fn decode_matches_ziggurat_real_device_capture() {
+        // Bytes lifted verbatim from ziggurat's own
+        // `ziggurat-spinel::test::test_spinel_sending_request`, which their own comment
+        // labels as "taken from a universal-silabs-flasher session with a real device".
+        // Cross-checking our decoder against an independently-verified real capture
+        // (not just our own synthetic fixtures) is the point.
+        const BYTES: [u8; 75] = [
+            0x7e, 0x83, 0x06, 0x02, 0x53, 0x4c, 0x2d, 0x4f, 0x50, 0x45, 0x4e, 0x54, 0x48, 0x52,
+            0x45, 0x41, 0x44, 0x2f, 0x32, 0x2e, 0x34, 0x2e, 0x34, 0x2e, 0x30, 0x5f, 0x47, 0x69,
+            0x74, 0x48, 0x75, 0x62, 0x2d, 0x37, 0x30, 0x37, 0x34, 0x61, 0x34, 0x33, 0x65, 0x34,
+            0x3b, 0x20, 0x45, 0x46, 0x52, 0x33, 0x32, 0x3b, 0x20, 0x4f, 0x63, 0x74, 0x20, 0x32,
+            0x31, 0x20, 0x32, 0x30, 0x32, 0x34, 0x20, 0x31, 0x34, 0x3a, 0x34, 0x30, 0x3a, 0x35,
+            0x37, 0x00, 0x81, 0xf7, 0x7e,
+        ];
+        const VERSION_STR: &str = "SL-OPENTHREAD/2.4.4.0_GitHub-7074a43e4; EFR32; Oct 21 2024 14:40:57\0";
+
+        let frame = HdlcLiteFrame::<NoVendor>::decode(&Bytes::from_static(&BYTES));
+        let expected = HdlcLiteFrame::new(Frame::<NoVendor>::new(
+            Header::new(0x00, 0x03),
+            Command::PropertyValueIs(
+                Property::NcpVersion,
+                Bytes::from_static(VERSION_STR.as_bytes()),
+            ),
+        ));
+        assert_eq!(frame, Ok(expected));
+    }
+
+    #[test]
     fn encode_ncp_version_property_is() {
         let header = Header::new(0x00, 0x01);
         let cmd = Command::PropertyValueIs(
