@@ -10,11 +10,11 @@ license.workspace = true
 [dependencies]
 bytes = { version = "1.5.0", features = ["serde"] }
 clap = { version = "4.5.1", features = ["derive"] }
-tokio-serial = { version = "5.4.4", features = ["bytes", "codec"] }
+env_logger = "0.11.3"
+futures = "0.3.30"
+log = "0.4.21"
+serialport = { version = "4.3.0", features = ["usbportinfo-interface"] }
 spinel = { path = "../spinel", version = "0.2.0" }
 tokio = { version = "1.36.0", features = ["rt", "bytes", "full"] }
-futures = "0.3.30"
-serialport = { version = "4.3.0", features = ["usbportinfo-interface"] }
+tokio-serial = { version = "5.4.4", features = ["bytes", "codec"] }
 tokio-util = "0.7.10"
-env_logger = "0.11.3"
-log = "0.4.21"
