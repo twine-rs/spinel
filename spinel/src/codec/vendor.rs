@@ -68,7 +68,7 @@ pub trait Vendor: Clone + core::fmt::Debug + PartialEq + MaybeFormat {
 ///
 /// It can never be constructed, so a [`Vendor`] generic type instantiated with
 /// [`NoVendor`] has no reachable vendor variants.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Never {}
 
 #[cfg(feature = "defmt")]
@@ -92,7 +92,7 @@ impl VendorValue for Never {
 ///
 /// All codec types default to `NoVendor`, so a standard protocol code needs no type
 /// parameters.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NoVendor;
 

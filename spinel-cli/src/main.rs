@@ -2,7 +2,7 @@ use clap::Parser;
 use spinel::{PosixSpinelHostHandle, SpinelHostConnection};
 
 /// A CLI tool for interacting with a networking device using the Spinel protocol.
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
     /// Baud rate
