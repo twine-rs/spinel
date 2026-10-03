@@ -1,7 +1,8 @@
-use crate::codec::vendor::{NoVendor, Vendor};
-use crate::{Error, Frame};
 use bytes::{BufMut, Bytes, BytesMut};
 use crc16::State;
+
+use crate::codec::vendor::{NoVendor, Vendor};
+use crate::{Error, Frame};
 
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -166,11 +167,12 @@ impl<V: Vendor> HdlcLiteFrame<V> {
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
+    use rand::distributions::Uniform;
+
     use super::*;
     use crate::Property;
     use crate::{Command, Header};
-    use bytes::Bytes;
-    use rand::distributions::Uniform;
 
     pub(crate) const TEST_DESYNC_STR: [u8; 24] = [
         0xc2, 0x5a, 0xa7, 0xaf, 0x97, 0xb1, 0x54, 0x99, 0x2b, 0xf5, 0x06, 0xe5, 0x7b, 0x5d, 0xdc,

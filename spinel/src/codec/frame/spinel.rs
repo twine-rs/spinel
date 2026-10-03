@@ -1,7 +1,8 @@
+use bytes::{BufMut, Bytes, BytesMut};
+
 use crate::codec::vendor::{NoVendor, Vendor};
 use crate::codec::PackedU32;
 use crate::{Command, Error, Property, Status};
-use bytes::{BufMut, Bytes, BytesMut};
 
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

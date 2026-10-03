@@ -1,3 +1,7 @@
+use core::fmt;
+
+use bytes::{BufMut, Bytes, BytesMut};
+
 use crate::{
     codec::{
         vendor::{NoVendor, Vendor, VendorValue},
@@ -5,8 +9,6 @@ use crate::{
     },
     error::Error,
 };
-use bytes::{BufMut, Bytes, BytesMut};
-use core::fmt;
 
 const CMD_NOOP: u32 = 0x00;
 const CMD_RESET: u32 = 0x01;

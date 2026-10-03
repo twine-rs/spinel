@@ -1,6 +1,7 @@
+use bytes::{BufMut, BytesMut};
+
 use super::PackedByteSlice;
 use crate::Error;
-use bytes::{BufMut, BytesMut};
 
 /// A packed representation of a `u32` value used in the Spinel protocol.
 ///

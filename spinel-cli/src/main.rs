@@ -1,4 +1,5 @@
 use clap::Parser;
+
 use spinel::{PosixSpinelHostHandle, SpinelHostConnection};
 
 /// A CLI tool for interacting with a networking device using the Spinel protocol.

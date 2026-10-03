@@ -1,6 +1,7 @@
+use core::fmt;
+
 use crate::codec::vendor::{NoVendor, Vendor, VendorValue};
 use crate::error::Error;
-use core::fmt;
 
 const PROP_LAST_STATUS: u32 = 0x00;
 const PROP_PROTOCOL_VERSION: u32 = 0x01;
