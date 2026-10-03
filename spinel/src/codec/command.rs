@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn property_value_set_round_trips() {
-        // Set(HardwareAddress, [0xDE, 0xAD]) -> cmd 0x03, prop 0x08, payload.
+        // Set(HardwareAddress, [0xDE, 0xAD]) encodes to cmd 0x03, prop 0x08, payload.
         let cmd = Command::<NoVendor>::PropertyValueSet(
             Property::HardwareAddress,
             Bytes::from_static(&[0xDE, 0xAD]),
