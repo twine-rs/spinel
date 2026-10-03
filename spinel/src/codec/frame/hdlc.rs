@@ -85,6 +85,7 @@ impl<V: Vendor> HdlcLiteFrame<V> {
     }
 
     /// Encode a [`HdlcLiteFrame`] into a mutable buffer of [`BytesMut`].
+    ///
     /// todo: limit?
     pub fn encode(self, buffer: &mut BytesMut) -> Result<(), Error> {
         // todo: check for escape, new BytesMut first then write to input buffer

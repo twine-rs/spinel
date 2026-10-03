@@ -82,8 +82,9 @@ impl<V: Vendor> fmt::Display for Command<V> {
 }
 
 impl<V: Vendor> Command<V> {
-    /// Build a [`Command::PropertyValueIs`] carrying [`Property::LastStatus`]
-    /// with `status` encoded as its packed value.
+    /// Build a [`Command::PropertyValueIs`] carrying [`Property::LastStatus`].
+    ///
+    /// The `status` is encoded as its packed value.
     pub fn last_status(status: Status<V>) -> Self {
         let mut value = BytesMut::new();
         PackedU32::write_to_buffer(u32::from(status), &mut value);

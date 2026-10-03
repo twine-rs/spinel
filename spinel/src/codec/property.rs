@@ -17,16 +17,14 @@ const PROP_STREAM_LOG: u32 = 0x74;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PropertyStream {
-    /// This stream provides the capability of sending human-readable debugging output which may be displayed in
-    /// the host logs.
+    /// This stream provides the capability of sending human-readable debugging output which may be displayed in the host logs.
     ///
     /// The location of newline characters is not assumed by the host. It is the device's responsibility to insert
     /// newline characters where needed. To receive debug output, wait for [`Command::PropertyValueIs`](crate::Command::PropertyValueIs)
     /// to be sent with this property ID.
     Debug,
 
-    /// This stream provides the capability of sending and receiving data packets to and from the currently attached
-    /// network.
+    /// This stream provides the capability of sending and receiving data packets to and from the currently attached network.
     ///
     /// The exact format of the frame metadata and data is dependent on the network protocol being used.
     ///

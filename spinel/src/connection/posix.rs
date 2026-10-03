@@ -21,6 +21,7 @@ type OneshotFrameReply = oneshot::Sender<Result<oneshot::Receiver<Frame>, Error>
 type BroadcastFrameReply = oneshot::Sender<Result<Receiver<Frame>, Error>>;
 
 /// A TID with a value of zero is reserved for messages where a response is not expected.
+///
 /// Start the TID at 1 to avoid the reserved value.
 const TID_START: u8 = 1;
 
