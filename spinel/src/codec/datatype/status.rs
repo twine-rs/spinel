@@ -116,7 +116,7 @@ pub enum Status<V: Vendor = NoVendor> {
     /// A vendor-defined status code.
     Vendor(V::Status),
 
-    /// A status code that maps to neither a core nor a vendor status; carries
+    /// A status code that maps to neither a core nor a vendor status. Carries
     /// the raw value.
     Unknown(u32),
 }

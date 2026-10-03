@@ -54,7 +54,7 @@ impl fmt::Display for PropertyStream {
 ///
 /// Covers the core protocol properties owned by `spinel`. Any wire ID the core
 /// protocol does not assign is delegated to the [`Vendor`] profile via
-/// [`Property::Vendor`]; with the default [`NoVendor`] profile such an ID is a
+/// [`Property::Vendor`]. With the default [`NoVendor`] profile such an ID is a
 /// decode error.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
