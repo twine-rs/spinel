@@ -84,13 +84,20 @@ pub trait Radio {
 pub struct RcpDevice<R: Radio> {
     radio: R,
     iid: u8,
+    /// Last value the host set for [`Property::MacRawStreamEnabled`]. Only reported back:
+    /// [`poll_raw_rx`](Self::poll_raw_rx) forwards received frames regardless.
+    raw_stream_enabled: bool,
 }
 
 impl<R: Radio> RcpDevice<R> {
     /// Create a new device dispatcher over `radio`, replying with the given Instance
     /// Identifier (IID) in unsolicited frames.
     pub fn new(radio: R, iid: u8) -> Self {
-        Self { radio, iid }
+        Self {
+            radio,
+            iid,
+            raw_stream_enabled: false,
+        }
     }
 
     /// Borrow the underlying [`Radio`].
@@ -162,6 +169,9 @@ impl<R: Radio> RcpDevice<R> {
             Property::MacPromiscuousMode => {
                 Command::PropertyValueIs(prop, encode_bool(self.radio.promiscuous()))
             }
+            Property::MacRawStreamEnabled => {
+                Command::PropertyValueIs(prop, encode_bool(self.raw_stream_enabled))
+            }
             _ => status_command(Status::PropertyNotFound),
         }
     }
@@ -176,6 +186,9 @@ impl<R: Radio> RcpDevice<R> {
             Property::MacPromiscuousMode => {
                 decode_bool(&value).and_then(|v| self.radio.set_promiscuous(v))
             }
+            Property::MacRawStreamEnabled => decode_bool(&value).map(|v| {
+                self.raw_stream_enabled = v;
+            }),
             // The optional transmit parameters (channel override, CSMA, retries, tx
             // power, ...) are accepted -- so a real caller sending them doesn't get a
             // parse error -- but not yet acted on: `Radio::transmit` has no per-call
@@ -366,6 +379,28 @@ mod tests {
         assert_eq!(
             get_reply.command(),
             Command::PropertyValueIs(Property::PhysicalEnabled, encode_bool(true))
+        );
+    }
+
+    #[test]
+    fn set_then_get_raw_stream_enabled_round_trips() {
+        let mut device = RcpDevice::new(MockRadio::default(), 0);
+
+        let get_reply = device.handle_frame(request(Command::PropertyValueGet(
+            Property::MacRawStreamEnabled,
+        )));
+        assert_eq!(
+            get_reply.command(),
+            Command::PropertyValueIs(Property::MacRawStreamEnabled, encode_bool(false))
+        );
+
+        let set_reply = device.handle_frame(request(Command::PropertyValueSet(
+            Property::MacRawStreamEnabled,
+            encode_bool(true),
+        )));
+        assert_eq!(
+            set_reply.command(),
+            Command::PropertyValueIs(Property::MacRawStreamEnabled, encode_bool(true))
         );
     }
 

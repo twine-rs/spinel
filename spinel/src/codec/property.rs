@@ -11,6 +11,7 @@ const PROP_HWADDR: u32 = 0x08;
 const PROP_PHY_ENABLED: u32 = 0x20;
 const PROP_PHY_CHAN: u32 = 0x21;
 const PROP_PHY_TX_POWER: u32 = 0x25;
+const PROP_MAC_RAW_STREAM_ENABLED: u32 = 0x37;
 const PROP_MAC_PROMISCUOUS_MODE: u32 = 0x38;
 const PROP_STREAM_DEBUG: u32 = 0x70;
 const PROP_STREAM_RAW: u32 = 0x71;
@@ -115,6 +116,13 @@ pub enum Property<V: Vendor = NoVendor> {
     /// Transmit power of the radio in dBm.
     PhysicalTxPower,
 
+    /// Whether received raw frames are sent to the host on
+    /// [`Stream`](Property::Stream)([`Raw`](PropertyStream::Raw)).
+    ///
+    /// OpenThread's RCP only starts receiving on the configured channel once this is set,
+    /// and OpenThread's host sets it before every receive.
+    MacRawStreamEnabled,
+
     /// Whether the radio's MAC layer is in promiscuous (monitor) mode, receiving all
     /// frames rather than just those addressed to it.
     MacPromiscuousMode,
@@ -136,6 +144,7 @@ impl<V: Vendor> fmt::Display for Property<V> {
             Property::PhysicalEnabled => write!(f, "PhysicalEnabled"),
             Property::PhysicalChannel => write!(f, "PhysicalChannel"),
             Property::PhysicalTxPower => write!(f, "PhysicalTxPower"),
+            Property::MacRawStreamEnabled => write!(f, "MacRawStreamEnabled"),
             Property::MacPromiscuousMode => write!(f, "MacPromiscuousMode"),
             Property::Vendor(v) => write!(f, "Vendor(0x{:x})", v.id()),
         }
@@ -162,6 +171,7 @@ impl<V: Vendor> Property<V> {
             Property::PhysicalEnabled => PROP_PHY_ENABLED,
             Property::PhysicalChannel => PROP_PHY_CHAN,
             Property::PhysicalTxPower => PROP_PHY_TX_POWER,
+            Property::MacRawStreamEnabled => PROP_MAC_RAW_STREAM_ENABLED,
             Property::MacPromiscuousMode => PROP_MAC_PROMISCUOUS_MODE,
             Property::Vendor(v) => v.id(),
         }
@@ -192,6 +202,7 @@ impl<V: Vendor> TryFrom<u32> for Property<V> {
             PROP_PHY_ENABLED => Ok(Property::PhysicalEnabled),
             PROP_PHY_CHAN => Ok(Property::PhysicalChannel),
             PROP_PHY_TX_POWER => Ok(Property::PhysicalTxPower),
+            PROP_MAC_RAW_STREAM_ENABLED => Ok(Property::MacRawStreamEnabled),
             PROP_MAC_PROMISCUOUS_MODE => Ok(Property::MacPromiscuousMode),
             // Any unassigned ID falls through to the vendor profile.
             _ => V::Property::try_from_id(id).map(Property::Vendor),
@@ -236,6 +247,7 @@ mod tests {
             Property::PhysicalEnabled,
             Property::PhysicalChannel,
             Property::PhysicalTxPower,
+            Property::MacRawStreamEnabled,
             Property::MacPromiscuousMode,
         ];
 
@@ -254,6 +266,7 @@ mod tests {
         assert_eq!(Property::<NoVendor>::PhysicalEnabled.id(), 0x20);
         assert_eq!(Property::<NoVendor>::PhysicalChannel.id(), 0x21);
         assert_eq!(Property::<NoVendor>::PhysicalTxPower.id(), 0x25);
+        assert_eq!(Property::<NoVendor>::MacRawStreamEnabled.id(), 0x37);
         assert_eq!(Property::<NoVendor>::MacPromiscuousMode.id(), 0x38);
     }
 }
