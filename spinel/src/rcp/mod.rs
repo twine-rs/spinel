@@ -106,12 +106,14 @@ impl<R: Radio> RcpDevice<R> {
     /// Handle one Host-to-RCP [`Frame`] and produce the RCP-to-Host reply.
     ///
     /// The reply echoes the request's [`Header`] (TID and IID), per the Spinel wire
-    /// format's request/response correlation.
+    /// format's request/response correlation. `Reset` is the exception: like OpenThread's
+    /// RCP, it is answered with an unsolicited (TID `0`) reset notification, which is how
+    /// hosts recognise that the device has reset.
     pub fn handle_frame(&mut self, frame: Frame) -> Frame {
         let header = frame.header();
         let command = match frame.command() {
             Command::Noop => status_command(Status::Ok),
-            Command::Reset => reset_command(),
+            Command::Reset => return Frame::new(Header::new(self.iid, 0), reset_command()),
             Command::PropertyValueGet(prop) => self.get(prop),
             Command::PropertyValueSet(prop, value) => self.set(prop, value),
             _ => status_command(Status::InvalidCommand),
@@ -206,8 +208,9 @@ fn status_command(status: Status) -> Command {
 
 fn reset_command() -> Command {
     // `RcpDevice` doesn't own an actual reboot -- that's the firmware's/caller's
-    // responsibility. This just reports the reset the way a real reset would.
-    let (bytes, len) = PackedU32::encode(u32::from(ResetReason::Software));
+    // responsibility. This just reports the reset the way a real reset would; OpenThread's
+    // RCP reports `RESET_POWER_ON` after a `CMD_RESET`.
+    let (bytes, len) = PackedU32::encode(u32::from(ResetReason::PowerOn));
     Command::PropertyValueIs(Property::LastStatus, Bytes::copy_from_slice(&bytes[..len]))
 }
 
@@ -324,6 +327,24 @@ mod tests {
         let reply = device.handle_frame(request(Command::Noop));
         assert_eq!(reply.last_status(), Some(Status::Ok));
         assert_eq!(reply.header().tid(), 1);
+    }
+
+    #[test]
+    fn reset_replies_with_unsolicited_power_on_notification() {
+        let mut device = RcpDevice::new(MockRadio::default(), 0);
+        let reply = device.handle_frame(request(Command::Reset));
+
+        assert_eq!(reply.header().tid(), 0);
+        let Command::PropertyValueIs(Property::LastStatus, value) = reply.command() else {
+            panic!(
+                "expected a LastStatus notification, got {:?}",
+                reply.command()
+            );
+        };
+        assert_eq!(
+            PackedU32::decode_checked(&value).map(|(v, _)| ResetReason::try_from(v)),
+            Ok(Ok(ResetReason::PowerOn))
+        );
     }
 
     #[test]
