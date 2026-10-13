@@ -95,7 +95,7 @@ pub enum Status<V: Vendor = NoVendor> {
     /// The packet was not sent due to CCA failure.
     CcaFailure,
 
-    /// The operation is already in progress or the property was already set to the given value.
+    /// The operation is already in progress.
     Already,
 
     /// The given item could not be found in the property.

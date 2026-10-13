@@ -30,17 +30,20 @@ pub enum PropertyStream {
     /// to be sent with this property ID.
     Debug,
 
-    /// This stream provides the capability of sending and receiving data packets to and from the currently attached
-    /// network.
-    ///
-    /// The exact format of the frame metadata and data is dependent on the network protocol being used.
+    /// This stream provides the capability of sending and receiving IPv6 data packets to and from the currently
+    /// attached network. The packets are sent and received securely (encrypted and authenticated).
     ///
     /// This property is a streaming property, meaning that you cannot explicitly fetch the value of this property. To
     /// receive traffic, wait for [`Command::PropertyValueIs`](crate::Command::PropertyValueIs) to be sent from
     /// the device to the host with this property ID. To send network packets a call to
     /// [`Command::PropertyValueSet`](crate::Command::PropertyValueSet) is required.
     Net,
+
+    /// Like [`PropertyStream::Net`], but the packets are unencrypted and unauthenticated. Used to exchange packets
+    /// with nearby devices for the purposes of device commissioning.
     NetInsecure,
+
+    /// This stream provides formatted log strings from the device, each optionally followed by log metadata.
     Log,
 
     /// Raw, unencapsulated data frames for the underlying radio (e.g. 802.15.4 PSDUs).
@@ -48,6 +51,7 @@ pub enum PropertyStream {
     /// Like [`PropertyStream::Net`], this is a streaming property: send a frame with
     /// [`Command::PropertyValueSet`](crate::Command::PropertyValueSet) and receive frames via
     /// unsolicited [`Command::PropertyValueIs`](crate::Command::PropertyValueIs) notifications.
+    /// Received frames are only sent once [`Property::MacRawStreamEnabled`] is set.
     Raw,
 }
 
@@ -102,9 +106,9 @@ pub enum Property<V: Vendor = NoVendor> {
     /// (for example IPv6 traffic).
     Stream(PropertyStream),
 
-    /// The static EUI64 address of the device.
+    /// The static EUI64 address of the device, used as a serial number.
     ///
-    /// Typically read-only, but may be writable for some vendor defined circumstances.
+    /// Read-only.
     HardwareAddress,
 
     /// Whether the underlying radio is enabled.
@@ -123,8 +127,8 @@ pub enum Property<V: Vendor = NoVendor> {
     /// and OpenThread's host sets it before every receive.
     MacRawStreamEnabled,
 
-    /// Whether the radio's MAC layer is in promiscuous (monitor) mode, receiving all
-    /// frames rather than just those addressed to it.
+    /// The MAC layer's promiscuous mode: 0 = off (normal MAC filtering), 1 = network (all
+    /// packets matching the network are passed up), 2 = full (all decoded packets are passed up).
     MacPromiscuousMode,
 
     /// A vendor-defined property.

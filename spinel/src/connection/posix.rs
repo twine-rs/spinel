@@ -322,7 +322,7 @@ struct PosixSpinelHost {
     /// HDLC encoded stream of messages coming from a serial device
     stream: Framed<SerialStream, HdlcCodec>,
 
-    /// Instance ID
+    /// Interface ID
     iid: u8,
 
     /// Request transaction ID

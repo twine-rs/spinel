@@ -11,17 +11,30 @@ use bytes::{BufMut, Bytes, BytesMut};
 /// byte belongs to other than its position.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RawTxFrame {
+    /// The frame to transmit, including the 2-byte FCS, which the radio fills in.
     pub psdu: Bytes,
+    /// Channel to transmit on. OpenThread requires it.
     pub channel: Option<u8>,
+    /// Maximum number of backoff attempts before declaring a CCA failure (stack default if
+    /// omitted).
     pub max_csma_backoffs: Option<u8>,
+    /// Maximum number of retries after a transmission failure (stack default if omitted).
     pub max_frame_retries: Option<u8>,
+    /// Whether to use CSMA-CA for this frame (default true).
     pub enable_csma_ca: Option<bool>,
+    /// Whether the frame header has already been updated (default false).
     pub is_header_updated: Option<bool>,
+    /// Whether this is a retransmission (default false).
     pub is_a_retransmit: Option<bool>,
+    /// Whether security has already been processed for this frame (default false).
     pub is_security_processed: Option<bool>,
+    /// CSL transmit delay (default zero).
     pub tx_delay: Option<u32>,
+    /// Base time for the CSL transmit delay (default zero).
     pub tx_delay_base_time: Option<u32>,
+    /// Channel to receive on after the transmission (defaults to [`channel`](Self::channel)).
     pub rx_channel_after_tx: Option<u8>,
+    /// Transmit power in dBm.
     pub tx_power: Option<i8>,
 }
 

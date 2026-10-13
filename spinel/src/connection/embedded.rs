@@ -48,7 +48,7 @@ where
     T: Read + Write,
 {
     /// Create a new connection over an already-configured [`embedded_io_async`] transport
-    /// (typically a UART peripheral) and Spinel Instance Identifier (IID).
+    /// (typically a UART peripheral) and Spinel Interface Identifier (IID).
     pub fn new(transport: T, iid: u8) -> Self {
         Self {
             transport,

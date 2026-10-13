@@ -90,7 +90,7 @@ pub struct RcpDevice<R: Radio> {
 }
 
 impl<R: Radio> RcpDevice<R> {
-    /// Create a new device dispatcher over `radio`, replying with the given Instance
+    /// Create a new device dispatcher over `radio`, replying with the given Interface
     /// Identifier (IID) in unsolicited frames.
     pub fn new(radio: R, iid: u8) -> Self {
         Self {

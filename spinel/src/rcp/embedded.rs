@@ -49,7 +49,7 @@ where
     R: Radio,
 {
     /// Create a new connection over an already-configured [`embedded_io_async`] transport
-    /// (typically a UART peripheral), dispatching to `radio` with the given Instance
+    /// (typically a UART peripheral), dispatching to `radio` with the given Interface
     /// Identifier (IID).
     pub fn new(transport: T, radio: R, iid: u8) -> Self {
         Self {
