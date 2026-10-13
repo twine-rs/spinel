@@ -160,10 +160,12 @@ impl<V: Vendor> HdlcLiteFrame<V> {
     /// It is the responsibility of the caller to ensure that the data stream is syncronized and
     /// the frame is complete before calling this function.
     pub fn decode(bytes: &Bytes) -> Result<Self, Error> {
-        if let Some(f) = bytes.first() {
-            if *f != Self::FRAME_DELIMITER_FLAG {
-                return Err(Error::HdlcStartDelimiter(*f));
+        match bytes.first() {
+            None => return Err(Error::PacketLength(0)),
+            Some(&f) if f != Self::FRAME_DELIMITER_FLAG => {
+                return Err(Error::HdlcStartDelimiter(f));
             }
+            Some(_) => {}
         }
 
         // Starting delimiter has been checked, shadow define bytes to remove it from CRC
@@ -199,6 +201,10 @@ impl<V: Vendor> HdlcLiteFrame<V> {
 
         // Split the payload and end of frame data
         let pkt_len = packet.len();
+        if pkt_len < 2 {
+            // Too short to even hold the CRC, e.g. line noise between two delimiters.
+            return Err(Error::PacketLength(pkt_len));
+        }
         let end_frame_data = packet.split_off(pkt_len - 2);
 
         let pkt_crc = u16::from_le_bytes([end_frame_data[0], end_frame_data[1]]);
@@ -379,6 +385,20 @@ mod tests {
         let mut buffer = BytesMut::with_capacity(32);
         hdlc_frame.encode(&mut buffer).unwrap();
         assert_eq!(buffer, Bytes::from_static(&TEST_REQ_NOOP_ARRAY));
+    }
+
+    #[test]
+    fn decode_rejects_frames_too_short_for_crc() {
+        for bytes in [&[][..], &[0x7E], &[0x7E, 0x7E], &[0x7E, 0x01, 0x7E]] {
+            let bytes = Bytes::copy_from_slice(bytes);
+            assert!(
+                matches!(
+                    HdlcLiteFrame::<NoVendor>::decode(&bytes),
+                    Err(Error::PacketLength(_)) | Err(Error::HdlcEndDelimiter(_))
+                ),
+                "{bytes:?}"
+            );
+        }
     }
 
     #[test]
