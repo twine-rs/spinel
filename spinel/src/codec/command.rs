@@ -25,17 +25,22 @@ pub enum Command<V: Vendor = NoVendor> {
 
     /// Reset
     ///
-    /// Perform a software reset on the target device. The device will reset and respond with a [`Status`](crate::Status)
-    /// message containing the [`ResetReason`](crate::ResetReason).
+    /// Perform a software reset on the target device. The TID is ignored: the device reports the
+    /// reset with an unsolicited [`Property::LastStatus`] containing the
+    /// [`ResetReason`](crate::ResetReason).
     Reset,
 
     /// Get the value of a property
     ///
     /// The device will respond with [`Command::PropertyValueIs`](crate::Command::PropertyValueIs) containing the value
-    /// of the property.
+    /// of the property, or with [`Property::LastStatus`] if an error occurs.
     PropertyValueGet(Property<V>),
 
     /// Set the value of a property
+    ///
+    /// On success the device responds with the new value of the property or with a
+    /// [`Property::LastStatus`] of [`Status::Ok`]; on failure, with a [`Property::LastStatus`]
+    /// containing the error.
     PropertyValueSet(Property<V>, Bytes),
 
     /// Notification of the value of a property
@@ -264,8 +269,7 @@ mod tests {
     #[test]
     fn payload_len() {
         for item in TEST_CMD_ARRAY.iter() {
-            println!("Command: {:?}", item.cmd);
-            assert_eq!(item.cmd.total_packed_len(), item.len);
+            assert_eq!(item.cmd.total_packed_len(), item.len, "{:?}", item.cmd);
         }
     }
 

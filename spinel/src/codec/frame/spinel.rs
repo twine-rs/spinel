@@ -1,8 +1,13 @@
 use crate::codec::vendor::{NoVendor, Vendor};
 use crate::codec::PackedU32;
-use crate::{Command, Error, Property, Status};
+use crate::{Command, Error, Property, PropertyStream, RawRxFrame, Status};
 use bytes::{BufMut, Bytes, BytesMut};
 
+/// The header byte of a Spinel frame: a fixed flag, the Interface Identifier (IID) and the
+/// Transaction Identifier (TID).
+///
+/// A reply uses the same IID and TID as the command it answers. TID 0 marks frames that don't
+/// expect a correlated reply, such as unsolicited updates from the device.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Header {
@@ -19,7 +24,7 @@ impl Header {
     const HEADER_IID_SHIFT: u32 = 4;
     const HEADER_TID_MASK: u8 = 0b0000_1111;
 
-    /// Create a new [`Header`] with the a Instance Identifier (IID) and Transaction Identifier (TID).
+    /// Create a new [`Header`] with the given Interface Identifier (IID) and Transaction Identifier (TID).
     pub fn new(iid: u8, tid: u8) -> Self {
         Self {
             flag: Self::HEADER_FLAG,
@@ -28,7 +33,7 @@ impl Header {
         }
     }
 
-    /// Get the Instance Identifier (IID) from the header.
+    /// Get the Interface Identifier (IID) from the header.
     pub fn iid(&self) -> u8 {
         self.iid
     }
@@ -126,6 +131,20 @@ impl<V: Vendor> Frame<V> {
             _ => None,
         }
     }
+
+    /// Check the [`Frame`] to see if it has a [`Command::PropertyValueIs`] with a
+    /// [`Property::Stream`]([`PropertyStream::Raw`]).
+    ///
+    /// Returns the decoded [`RawRxFrame`] if it exists and decodes successfully,
+    /// otherwise `None`.
+    pub fn stream_raw_frame(&self) -> Option<RawRxFrame> {
+        match &self.command {
+            Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), value) => {
+                RawRxFrame::decode(value).ok()
+            }
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -180,5 +199,47 @@ mod tests {
         );
 
         assert_eq!(frame.last_status(), None);
+    }
+
+    #[test]
+    fn stream_raw_frame_decodes_raw_stream_notification() {
+        let rx_frame = RawRxFrame {
+            psdu: Bytes::from_static(&[0xAA, 0xBB]),
+            rssi: -40,
+            noise_floor: -90,
+            flags: 0,
+            channel: 11,
+            lqi: 100,
+            timestamp_us: 42,
+            receive_error: 0,
+            ack_key_id: 0,
+            ack_frame_counter: 0,
+        };
+        let frame = Frame::<NoVendor>::new(
+            Header::new(0x0, 0x0),
+            Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), rx_frame.to_bytes()),
+        );
+
+        assert_eq!(frame.stream_raw_frame(), Some(rx_frame));
+    }
+
+    #[test]
+    fn stream_raw_frame_ignores_malformed_payload() {
+        let frame = Frame::<NoVendor>::new(
+            Header::new(0x0, 0x0),
+            Command::PropertyValueIs(
+                Property::Stream(PropertyStream::Raw),
+                Bytes::from_static(&[0xFF]),
+            ),
+        );
+
+        assert_eq!(frame.stream_raw_frame(), None);
+    }
+
+    #[test]
+    fn stream_raw_frame_ignores_unrelated_command() {
+        let frame = Frame::<NoVendor>::new(Header::new(0x1, 0x2), Command::Noop);
+
+        assert_eq!(frame.stream_raw_frame(), None);
     }
 }

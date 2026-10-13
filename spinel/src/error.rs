@@ -53,4 +53,34 @@ pub enum Error {
     Status(u32),
     #[error("Target sent an unexpected response for command: {0}")]
     UnexpectedResponse(u32),
+    #[error("All transaction IDs are awaiting a response")]
+    TransactionIdsExhausted,
+}
+
+// Manual impl instead of `#[derive(defmt::Format)]`: `core::str::Utf8Error` (inside
+// `DatatypeParseU8`) and the std-only `IoError`/`HostConnectionRecvError` aliases don't
+// implement `defmt::Format`, so their variants are named without their payload.
+#[cfg(feature = "defmt")]
+impl defmt::Format for Error {
+    fn format(&self, fmt: defmt::Formatter) {
+        match self {
+            Error::DatatypeParseU8(_) => defmt::write!(fmt, "DatatypeParseU8"),
+            Error::Header(v) => defmt::write!(fmt, "Header({})", v),
+            Error::HdlcChecksum(v) => defmt::write!(fmt, "HdlcChecksum({})", v),
+            Error::HdlcStartDelimiter(v) => defmt::write!(fmt, "HdlcStartDelimiter({})", v),
+            Error::HdlcEndDelimiter(v) => defmt::write!(fmt, "HdlcEndDelimiter({})", v),
+            Error::HostConnectionSend => defmt::write!(fmt, "HostConnectionSend"),
+            Error::HostConnectionRecv(_) => defmt::write!(fmt, "HostConnectionRecv"),
+            Error::Command(v) => defmt::write!(fmt, "Command({})", v),
+            Error::Io(_) => defmt::write!(fmt, "Io"),
+            Error::Property(v) => defmt::write!(fmt, "Property({})", v),
+            Error::PackedU32ByteCount => defmt::write!(fmt, "PackedU32ByteCount"),
+            Error::CapsMalformed => defmt::write!(fmt, "CapsMalformed"),
+            Error::PacketLength(v) => defmt::write!(fmt, "PacketLength({})", v),
+            Error::SerialConfig => defmt::write!(fmt, "SerialConfig"),
+            Error::Status(v) => defmt::write!(fmt, "Status({})", v),
+            Error::UnexpectedResponse(v) => defmt::write!(fmt, "UnexpectedResponse({})", v),
+            Error::TransactionIdsExhausted => defmt::write!(fmt, "TransactionIdsExhausted"),
+        }
+    }
 }

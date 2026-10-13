@@ -6,6 +6,9 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
         mod posix;
         pub use posix::PosixSpinelHostHandle;
+    } else {
+        mod embedded;
+        pub use embedded::EmbeddedSpinelHostConnection;
     }
 }
 
