@@ -479,6 +479,7 @@ impl PosixSpinelHost {
     ) {
         log::trace!("Sending request: {cmd:?}");
 
+        Self::prune_abandoned_tids(&mut self.lut);
         let tid = match Self::find_free_tid(self.tid, &self.lut) {
             Ok(tid) => tid,
             Err(e) => {
@@ -543,6 +544,15 @@ impl PosixSpinelHost {
         Err(Error::TransactionIdsExhausted)
     }
 
+    /// Drop lookup-table entries whose caller has stopped waiting for the response.
+    ///
+    /// Entries are otherwise only removed when a response arrives, so a request the
+    /// device never answers, or whose caller dropped its receiver (e.g. `reset`, which
+    /// doesn't await its reply), would hold its TID until the next device reset.
+    fn prune_abandoned_tids(in_flight: &mut HashMap<u8, oneshot::Sender<Frame>>) {
+        in_flight.retain(|_, sender| !sender.is_closed());
+    }
+
     /// Reset the TID and clear out the lookup table.
     fn reset_tid(&mut self) {
         self.tid = TID_START;
@@ -561,6 +571,19 @@ mod tests {
                 (tid, tx)
             })
             .collect()
+    }
+
+    #[test]
+    fn prune_abandoned_tids_reclaims_dropped_receivers() {
+        // Every receiver in `in_flight` is dropped right away, as if each caller gave up.
+        let mut lut = in_flight(&(1..=15).collect::<Vec<_>>());
+        let (waiting_tx, _waiting_rx) = oneshot::channel();
+        lut.insert(1, waiting_tx);
+
+        PosixSpinelHost::prune_abandoned_tids(&mut lut);
+
+        assert_eq!(lut.keys().copied().collect::<Vec<_>>(), vec![1]);
+        assert_eq!(PosixSpinelHost::find_free_tid(1, &lut), Ok(2));
     }
 
     #[test]
