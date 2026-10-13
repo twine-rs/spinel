@@ -694,7 +694,8 @@ mod tests {
             lqi: 100,
             timestamp_us: 12_345,
             receive_error: 0,
-            manufacturer_specific: Bytes::new(),
+            ack_key_id: 0,
+            ack_frame_counter: 0,
         };
 
         harness

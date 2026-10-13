@@ -127,19 +127,12 @@ impl<R: Radio> RcpDevice<R> {
     pub fn poll_raw_rx(&mut self, buf: &mut [u8]) -> Option<Frame> {
         let n = self.radio.try_receive(buf)?;
 
-        // `rssi`/`noise_floor`/`lqi`/`timestamp_us` are placeholder zeros: `Radio::try_receive`
+        // Everything but `channel` stays at its `spinel.h` default: `Radio::try_receive`
         // only exposes the received bytes today, not per-frame radio metadata. `channel` is
         // real, read from the radio itself.
         let rx_frame = RawRxFrame {
-            psdu: Bytes::copy_from_slice(&buf[..n]),
-            rssi: 0,
-            noise_floor: 0,
-            flags: 0,
             channel: self.radio.channel(),
-            lqi: 0,
-            timestamp_us: 0,
-            receive_error: 0,
-            manufacturer_specific: Bytes::new(),
+            ..RawRxFrame::new(Bytes::copy_from_slice(&buf[..n]))
         };
 
         Some(Frame::new(

@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::{Error, PackedU32};
 use bytes::{BufMut, Bytes, BytesMut};
 
 /// Host-to-RCP raw 802.15.4 transmit request: the payload of a `PropertyValueSet` on
@@ -220,38 +220,89 @@ impl defmt::Format for RawTxFrame {
 /// RCP-to-Host raw 802.15.4 receive notification: the payload of a `PropertyValueIs` on
 /// [`Property::Stream`](crate::Property::Stream)([`PropertyStream::Raw`](crate::PropertyStream::Raw)).
 ///
-/// Matches OpenThread's `SPINEL_PROP_STREAM_RAW` wire format (and ziggurat's
-/// `SpinelRxFrame`): a `u16` little-endian PSDU-length prefix, the PSDU, a fixed
-/// 17-byte metadata trailer, then an optional vendor/manufacturer-specific tail.
+/// Matches OpenThread's `SPINEL_PROP_STREAM_RAW` receive format, as written by
+/// `NcpBase::PackRadioFrame` and read by `RadioSpinel::ParseRadioFrame`:
+///
+/// ```text
+/// u16 psdu_len, psdu
+/// i8  rssi
+/// i8  noise_floor
+/// u16 flags
+/// u16 len, { u8 channel, u8 lqi, u64 timestamp_us }   PHY-data
+/// u16 len, { packed-uint receive_error }              Vendor-data
+/// u16 len, { u8 ack_key_id, u32 ack_frame_counter }   MAC-data
+/// ```
+///
+/// All integers are little-endian. Per `spinel.h`, metadata may be partially specified:
+/// [`decode`](Self::decode) fills in defaults for any trailing fields that are absent,
+/// and skips unknown bytes at the end of a length-prefixed struct.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RawRxFrame {
+    /// The received frame, including the FCS.
     pub psdu: Bytes,
+    /// Received signal strength in dBm (default -128).
     pub rssi: i8,
+    /// Noise floor in dBm (default -128). OpenThread's RCP always sends -128.
     pub noise_floor: i8,
-    pub flags: u32,
+    /// Metadata flags: 0x0001 transmitted rather than received, 0x0004 bad FCS, 0x0008 likely
+    /// duplicate, 0x0010 acknowledged with frame pending set, 0x0020 acknowledged with a secure
+    /// enhanced ACK.
+    pub flags: u16,
+    /// The 802.15.4 channel the frame was received on.
     pub channel: u8,
+    /// The 802.15.4 link quality indicator (LQI).
     pub lqi: u8,
+    /// Receive timestamp in microseconds.
     pub timestamp_us: u64,
-    pub receive_error: u8,
-    pub manufacturer_specific: Bytes,
+    /// OpenThread `otError` the frame was received with; `0` means no error.
+    pub receive_error: u32,
+    /// Key ID from the security header of the ACK sent for this frame.
+    pub ack_key_id: u8,
+    /// Frame counter from the security header of the ACK sent for this frame.
+    pub ack_frame_counter: u32,
 }
 
 impl RawRxFrame {
-    /// Length, in bytes, of the fixed metadata trailer following the PSDU: rssi(1) +
-    /// noise_floor(1) + flags(4) + channel(1) + lqi(1) + timestamp_us(8) + receive_error(1).
-    const TRAILER_LEN: usize = 1 + 1 + 4 + 1 + 1 + 8 + 1;
+    /// `spinel.h`'s default for an unspecified RSSI or noise floor.
+    pub const RSSI_UNKNOWN: i8 = -128;
+
+    /// A received PSDU with every metadata field at its `spinel.h` default.
+    pub fn new(psdu: Bytes) -> Self {
+        Self {
+            psdu,
+            rssi: Self::RSSI_UNKNOWN,
+            noise_floor: Self::RSSI_UNKNOWN,
+            flags: 0,
+            channel: 0,
+            lqi: 0,
+            timestamp_us: 0,
+            receive_error: 0,
+            ack_key_id: 0,
+            ack_frame_counter: 0,
+        }
+    }
 
     pub fn encode(&self, buffer: &mut BytesMut) {
         buffer.put_u16_le(self.psdu.len() as u16);
         buffer.put_slice(&self.psdu);
         buffer.put_i8(self.rssi);
         buffer.put_i8(self.noise_floor);
-        buffer.put_u32_le(self.flags);
+        buffer.put_u16_le(self.flags);
+
+        // PHY-data
+        buffer.put_u16_le(1 + 1 + 8);
         buffer.put_u8(self.channel);
         buffer.put_u8(self.lqi);
         buffer.put_u64_le(self.timestamp_us);
-        buffer.put_u8(self.receive_error);
-        buffer.put_slice(&self.manufacturer_specific);
+
+        // Vendor-data
+        buffer.put_u16_le(PackedU32::packed_len(self.receive_error) as u16);
+        PackedU32::write_to_buffer(self.receive_error, buffer);
+
+        // MAC-data
+        buffer.put_u16_le(1 + 4);
+        buffer.put_u8(self.ack_key_id);
+        buffer.put_u32_le(self.ack_frame_counter);
     }
 
     pub fn to_bytes(&self) -> Bytes {
@@ -260,66 +311,148 @@ impl RawRxFrame {
         buffer.freeze()
     }
 
+    /// Decode a notification. Only the PSDU-length prefix and PSDU are required; a
+    /// metadata field that is cut off partway through, or a struct whose length prefix
+    /// overruns the payload, is an error.
     pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
-        if bytes.len() < 2 {
-            return Err(Error::PacketLength(bytes.len()));
+        let mut reader = Reader::new(bytes);
+
+        let psdu_len = reader.u16()?.ok_or(Error::PacketLength(bytes.len()))? as usize;
+        let psdu = reader
+            .take(psdu_len)
+            .ok_or(Error::PacketLength(bytes.len()))?;
+        let mut frame = Self::new(Bytes::copy_from_slice(psdu));
+
+        let Some(rssi) = reader.u8()? else {
+            return Ok(frame);
+        };
+        frame.rssi = rssi as i8;
+
+        let Some(noise_floor) = reader.u8()? else {
+            return Ok(frame);
+        };
+        frame.noise_floor = noise_floor as i8;
+
+        let Some(flags) = reader.u16()? else {
+            return Ok(frame);
+        };
+        frame.flags = flags;
+
+        let Some(mut phy) = reader.struct_()? else {
+            return Ok(frame);
+        };
+        if let Some(channel) = phy.u8()? {
+            frame.channel = channel;
+            if let Some(lqi) = phy.u8()? {
+                frame.lqi = lqi;
+                if let Some(timestamp_us) = phy.u64()? {
+                    frame.timestamp_us = timestamp_us;
+                }
+            }
         }
 
-        let psdu_len = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
-        let mut offset = 2;
-
-        if bytes.len() < offset + psdu_len + Self::TRAILER_LEN {
-            return Err(Error::PacketLength(bytes.len()));
+        let Some(vendor) = reader.struct_()? else {
+            return Ok(frame);
+        };
+        if !vendor.is_empty() {
+            frame.receive_error = PackedU32::decode_checked(vendor.rest())?.0;
         }
 
-        let psdu = Bytes::copy_from_slice(&bytes[offset..offset + psdu_len]);
-        offset += psdu_len;
+        let Some(mut mac) = reader.struct_()? else {
+            return Ok(frame);
+        };
+        if let Some(ack_key_id) = mac.u8()? {
+            frame.ack_key_id = ack_key_id;
+            if let Some(ack_frame_counter) = mac.u32()? {
+                frame.ack_frame_counter = ack_frame_counter;
+            }
+        }
 
-        let rssi = bytes[offset] as i8;
-        offset += 1;
+        Ok(frame)
+    }
+}
 
-        let noise_floor = bytes[offset] as i8;
-        offset += 1;
+/// Cursor over the optional, little-endian metadata fields of a [`RawRxFrame`].
+///
+/// Each read returns `Ok(None)` when the input is exhausted (the field was omitted) and
+/// `Err` when only part of the field is present.
+struct Reader<'a> {
+    bytes: &'a [u8],
+    total_len: usize,
+}
 
-        let flags = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-        offset += 4;
+impl<'a> Reader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            total_len: bytes.len(),
+        }
+    }
 
-        let channel = bytes[offset];
-        offset += 1;
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
 
-        let lqi = bytes[offset];
-        offset += 1;
+    fn rest(&self) -> &'a [u8] {
+        self.bytes
+    }
 
-        let timestamp_us = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-        offset += 8;
+    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+        if self.bytes.len() < n {
+            return None;
+        }
+        let (head, tail) = self.bytes.split_at(n);
+        self.bytes = tail;
+        Some(head)
+    }
 
-        let receive_error = bytes[offset];
-        offset += 1;
+    fn array<const N: usize>(&mut self) -> Result<Option<[u8; N]>, Error> {
+        if self.bytes.is_empty() {
+            return Ok(None);
+        }
+        let head = self.take(N).ok_or(Error::PacketLength(self.total_len))?;
+        Ok(Some(head.try_into().unwrap()))
+    }
 
-        let manufacturer_specific = Bytes::copy_from_slice(&bytes[offset..]);
+    fn u8(&mut self) -> Result<Option<u8>, Error> {
+        Ok(self.array::<1>()?.map(|b| b[0]))
+    }
 
-        Ok(Self {
-            psdu,
-            rssi,
-            noise_floor,
-            flags,
-            channel,
-            lqi,
-            timestamp_us,
-            receive_error,
-            manufacturer_specific,
-        })
+    fn u16(&mut self) -> Result<Option<u16>, Error> {
+        Ok(self.array()?.map(u16::from_le_bytes))
+    }
+
+    fn u32(&mut self) -> Result<Option<u32>, Error> {
+        Ok(self.array()?.map(u32::from_le_bytes))
+    }
+
+    fn u64(&mut self) -> Result<Option<u64>, Error> {
+        Ok(self.array()?.map(u64::from_le_bytes))
+    }
+
+    /// Read a `u16`-length-prefixed struct and return a reader over its contents.
+    fn struct_(&mut self) -> Result<Option<Reader<'a>>, Error> {
+        let Some(len) = self.u16()? else {
+            return Ok(None);
+        };
+        let body = self
+            .take(len as usize)
+            .ok_or(Error::PacketLength(self.total_len))?;
+        Ok(Some(Reader {
+            bytes: body,
+            total_len: self.total_len,
+        }))
     }
 }
 
 // Manual impl instead of `#[derive(defmt::Format)]`: `Bytes` doesn't implement
-// `defmt::Format`, so `psdu`/`manufacturer_specific` are formatted as byte slices instead.
+// `defmt::Format`, so `psdu` is formatted as a byte slice instead.
 #[cfg(feature = "defmt")]
 impl defmt::Format for RawRxFrame {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
-            "RawRxFrame {{ psdu: {=[u8]}, rssi: {}, noise_floor: {}, flags: {}, channel: {}, lqi: {}, timestamp_us: {}, receive_error: {}, manufacturer_specific: {=[u8]} }}",
+            "RawRxFrame {{ psdu: {=[u8]}, rssi: {}, noise_floor: {}, flags: {}, channel: {}, lqi: {}, timestamp_us: {}, receive_error: {}, ack_key_id: {}, ack_frame_counter: {} }}",
             &self.psdu[..],
             self.rssi,
             self.noise_floor,
@@ -328,7 +461,8 @@ impl defmt::Format for RawRxFrame {
             self.lqi,
             self.timestamp_us,
             self.receive_error,
-            &self.manufacturer_specific[..],
+            self.ack_key_id,
+            self.ack_frame_counter,
         )
     }
 }
@@ -398,12 +532,13 @@ mod tests {
             psdu: Bytes::from_static(&[0x01, 0x02, 0x03]),
             rssi: -70,
             noise_floor: -95,
-            flags: 0x1234_5678,
+            flags: 0x1234,
             channel: 15,
             lqi: 200,
             timestamp_us: 0x0102_0304_0506_0708,
-            receive_error: 0,
-            manufacturer_specific: Bytes::new(),
+            receive_error: 300,
+            ack_key_id: 2,
+            ack_frame_counter: 0xAABB_CCDD,
         };
         let bytes = frame.to_bytes();
 
@@ -412,59 +547,109 @@ mod tests {
 
     #[test]
     fn rx_frame_pinned_byte_layout() {
-        // Pins the wire layout against the values defined in OpenThread's `spinel.h`
-        // rx-frame format, since a silent drift here breaks interop with real Spinel
-        // hosts/RCPs without any local round-trip test noticing.
+        // Pins the wire layout against OpenThread's `NcpBase::PackRadioFrame` /
+        // `RadioSpinel::ParseRadioFrame`, since a silent drift here breaks interop with
+        // real Spinel hosts/RCPs without any local round-trip test noticing.
         let frame = RawRxFrame {
             psdu: Bytes::from_static(&[0xAB, 0xCD]),
             rssi: -1,
-            noise_floor: -2,
-            flags: 0x0000_0001,
+            noise_floor: -128,
+            flags: 0x0001,
             channel: 20,
             lqi: 255,
             timestamp_us: 1,
             receive_error: 0,
-            manufacturer_specific: Bytes::from_static(&[0x99]),
+            ack_key_id: 3,
+            ack_frame_counter: 7,
         };
 
         #[rustfmt::skip]
-        let expected: [u8; 22] = [
+        let expected: [u8; 30] = [
             0x02, 0x00, // psdu_len = 2 (LE)
             0xAB, 0xCD, // psdu
             0xFF, // rssi = -1
-            0xFE, // noise_floor = -2
-            0x01, 0x00, 0x00, 0x00, // flags = 1 (LE)
+            0x80, // noise_floor = -128
+            0x01, 0x00, // flags = 1 (LE)
+            0x0A, 0x00, // PHY-data struct length = 10
             0x14, // channel = 20
             0xFF, // lqi = 255
             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // timestamp_us = 1 (LE)
-            0x00, // receive_error = 0
-            0x99, // manufacturer_specific
+            0x01, 0x00, // Vendor-data struct length = 1
+            0x00, // receive_error = 0 (packed)
+            0x05, 0x00, // MAC-data struct length = 5
+            0x03, // ack_key_id = 3
+            0x07, 0x00, 0x00, 0x00, // ack_frame_counter = 7 (LE)
         ];
         assert_eq!(&frame.to_bytes()[..], &expected);
+        assert_eq!(RawRxFrame::decode(&expected), Ok(frame));
     }
 
     #[test]
-    fn rx_frame_round_trips_with_manufacturer_specific_tail() {
-        let frame = RawRxFrame {
-            psdu: Bytes::from_static(&[0x01]),
-            rssi: 0,
-            noise_floor: 0,
-            flags: 0,
-            channel: 11,
-            lqi: 0,
-            timestamp_us: 0,
-            receive_error: 0,
-            manufacturer_specific: Bytes::from_static(&[0xDE, 0xAD, 0xBE, 0xEF]),
-        };
-        let bytes = frame.to_bytes();
+    fn rx_frame_decodes_without_mac_data() {
+        // What a host sees from an RCP that omits the MAC-data struct, which OpenThread's
+        // host only reads when the radio has `OT_RADIO_CAPS_TRANSMIT_SEC`.
+        #[rustfmt::skip]
+        let bytes = [
+            0x01, 0x00, 0xAA,
+            0xC4, 0x80,
+            0x00, 0x00,
+            0x0A, 0x00, 0x0B, 0x64, 0x2A, 0, 0, 0, 0, 0, 0, 0,
+            0x01, 0x00, 0x00,
+        ];
+        let frame = RawRxFrame::decode(&bytes).unwrap();
 
-        assert_eq!(RawRxFrame::decode(&bytes), Ok(frame));
+        assert_eq!(frame.rssi, -60);
+        assert_eq!(frame.channel, 11);
+        assert_eq!(frame.lqi, 100);
+        assert_eq!(frame.timestamp_us, 42);
+        assert_eq!(frame.receive_error, 0);
+        assert_eq!(frame.ack_key_id, 0);
+        assert_eq!(frame.ack_frame_counter, 0);
     }
 
     #[test]
-    fn rx_frame_decode_fails_on_missing_trailer() {
-        // A PSDU with no metadata trailer at all.
+    fn rx_frame_bare_psdu_uses_defaults() {
         let bytes = [0x01, 0x00, 0xAA];
+        assert_eq!(
+            RawRxFrame::decode(&bytes),
+            Ok(RawRxFrame::new(Bytes::from_static(&[0xAA])))
+        );
+    }
+
+    #[test]
+    fn rx_frame_skips_unknown_struct_tail() {
+        // A PHY-data struct with two extra bytes beyond the fields this crate knows.
+        #[rustfmt::skip]
+        let bytes = [
+            0x00, 0x00,
+            0x00, 0x00,
+            0x00, 0x00,
+            0x0C, 0x00, 0x0F, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0xEE, 0xEE,
+            0x01, 0x00, 0x05,
+        ];
+        let frame = RawRxFrame::decode(&bytes).unwrap();
+
+        assert_eq!(frame.channel, 15);
+        assert_eq!(frame.receive_error, 5);
+    }
+
+    #[test]
+    fn rx_frame_decode_fails_on_truncated_field() {
+        // Flags cut off after one byte.
+        let bytes = [0x01, 0x00, 0xAA, 0x00, 0x00, 0x01];
+        assert_eq!(RawRxFrame::decode(&bytes), Err(Error::PacketLength(6)));
+    }
+
+    #[test]
+    fn rx_frame_decode_fails_on_overlong_struct() {
+        // PHY-data struct claims 10 bytes but only 2 follow.
+        let bytes = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x0B, 0x64];
+        assert_eq!(RawRxFrame::decode(&bytes), Err(Error::PacketLength(10)));
+    }
+
+    #[test]
+    fn rx_frame_decode_fails_on_truncated_psdu() {
+        let bytes = [0x04, 0x00, 0xAA];
         assert_eq!(RawRxFrame::decode(&bytes), Err(Error::PacketLength(3)));
     }
 }
