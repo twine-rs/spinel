@@ -264,8 +264,7 @@ mod tests {
     #[test]
     fn payload_len() {
         for item in TEST_CMD_ARRAY.iter() {
-            println!("Command: {:?}", item.cmd);
-            assert_eq!(item.cmd.total_packed_len(), item.len);
+            assert_eq!(item.cmd.total_packed_len(), item.len, "{:?}", item.cmd);
         }
     }
 
