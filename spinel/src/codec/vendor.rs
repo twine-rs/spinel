@@ -12,8 +12,8 @@
 //! reject IDs it does not own so decoding surfaces an error rather than silently
 //! failing to decode.
 
-use crate::Error;
 use crate::codec::PackedU32;
+use crate::Error;
 
 #[cfg(feature = "defmt")]
 pub trait MaybeFormat: defmt::Format {}

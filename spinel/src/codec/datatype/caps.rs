@@ -7,9 +7,9 @@ use core::marker::PhantomData;
 
 use bytes::BytesMut;
 
-use crate::Error;
-use crate::codec::PackedU32;
 use crate::codec::vendor::{NoVendor, Vendor, VendorValue};
+use crate::codec::PackedU32;
+use crate::Error;
 
 /// A device capability.
 #[derive(Clone, Debug, PartialEq)]

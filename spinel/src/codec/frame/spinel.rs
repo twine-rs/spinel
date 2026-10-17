@@ -1,7 +1,7 @@
 use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::codec::PackedU32;
 use crate::codec::vendor::{NoVendor, Vendor};
+use crate::codec::PackedU32;
 use crate::{Command, Error, Property, Status};
 
 #[derive(Clone, Debug, PartialEq)]
