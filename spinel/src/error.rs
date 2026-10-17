@@ -47,6 +47,10 @@ pub enum Error {
     CapsMalformed,
     #[error("Incorrect packet length: {0}")]
     PacketLength(usize),
+    #[error("No free transaction ID, all requests are pending")]
+    RequestBusy,
+    #[error("No response received within the request timeout")]
+    RequestTimeout,
     #[error("Error configuring serial port")]
     SerialConfig,
     #[error("Target status: {0}")]
