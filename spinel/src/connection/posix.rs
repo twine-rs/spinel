@@ -433,14 +433,14 @@ impl PosixSpinelHostHandle {
 
         let response = receiver.await??.await.map_err(Error::from)??;
 
+        // The transmit-done arrives as a LastStatus value on the request TID.
+        // A STREAM_RAW value is accepted too, because the Spinel header
+        // documents the response under that property.
         let cmd_id = response.command().id();
         match response.command {
-            Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), v) => {
+            Command::PropertyValueIs(Property::LastStatus, v)
+            | Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), v) => {
                 RawTxDone::decode(&v)
-            }
-            Command::PropertyValueIs(Property::LastStatus, v) => {
-                let (code, _) = PackedU32::decode_checked(&v)?;
-                Err(Error::Status(code))
             }
             _ => Err(Error::UnexpectedResponse(cmd_id)),
         }
@@ -1149,14 +1149,16 @@ mod tests {
             Command::PropertyValueSet(Property::Stream(PropertyStream::Raw), expected.freeze())
         );
 
-        // Reply with a transmit-done report of Ok and no ack.
+        // Reply with a transmit-done report of Ok and no ack. The device
+        // reports it as a LastStatus value on the request TID.
         let mut done = BytesMut::new();
         PackedU32::write_to_buffer(0, &mut done);
+        SpinelBool::write_to_buffer(false, &mut done);
         SpinelBool::write_to_buffer(false, &mut done);
         device
             .send(Frame::new(
                 Header::new(0, tid),
-                Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), done.freeze()),
+                Command::PropertyValueIs(Property::LastStatus, done.freeze()),
             ))
             .await
             .unwrap();
@@ -1164,6 +1166,7 @@ mod tests {
         let done = tx.await.unwrap().unwrap();
         assert_eq!(done.status, Status::Ok);
         assert!(!done.frame_pending);
+        assert!(!done.header_updated);
         assert_eq!(done.ack, None);
     }
 
