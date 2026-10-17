@@ -247,6 +247,16 @@ mod tests {
     }
 
     #[test]
+    fn packed_len_tiers() {
+        assert_eq!(PackedU32::packed_len(0), 1);
+        assert_eq!(PackedU32::packed_len(127), 1);
+        assert_eq!(PackedU32::packed_len(128), 2);
+        assert_eq!(PackedU32::packed_len(16_383), 2);
+        assert_eq!(PackedU32::packed_len(16_384), 3);
+        assert_eq!(PackedU32::packed_len(2_097_151), 3);
+    }
+
+    #[test]
     fn encode_u32() {
         for item in TEST_PACK_ARRAY.iter() {
             let (result, count) = PackedU32::encode(item.unpacked);

@@ -424,6 +424,17 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_checksum_only_packet() {
+        // Two bytes pass the length guard. The checksum of an empty packet
+        // is 0x0000, so decoding proceeds to the empty frame and fails there.
+        let bytes = Bytes::from_static(&[0x7E, 0x00, 0x00, 0x7E]);
+        assert_eq!(
+            HdlcLiteFrame::<NoVendor>::decode(&bytes),
+            Err(Error::PacketLength(0))
+        );
+    }
+
+    #[test]
     fn decode_stream() {
         let bytes = Bytes::from_static(&TEST_HDLC_DECODE_STREAM);
         println!("bytes: {:02x?}", &bytes[..]);

@@ -240,18 +240,37 @@ mod tests {
     }
 
     #[test]
-    fn raw_mode_property_ids_round_trip() {
-        let cases: [(Property, u32); 5] = [
-            (Property::Stream(PropertyStream::Raw), 0x71),
+    fn core_property_ids_round_trip() {
+        let cases: [(Property, u32); 16] = [
+            (Property::LastStatus, 0x00),
+            (Property::ProtocolVersion, 0x01),
+            (Property::NcpVersion, 0x02),
+            (Property::InterfaceType, 0x03),
+            (Property::Capabilities, 0x05),
+            (Property::HardwareAddress, 0x08),
             (Property::PhysicalEnabled, 0x20),
             (Property::PhysicalChannel, 0x21),
+            (Property::PhysicalTxPower, 0x26),
             (Property::MacRawStreamEnabled, 0x37),
             (Property::MacPromiscuousMode, 0x38),
+            (Property::Stream(PropertyStream::Debug), 0x70),
+            (Property::Stream(PropertyStream::Raw), 0x71),
+            (Property::Stream(PropertyStream::Net), 0x72),
+            (Property::Stream(PropertyStream::NetInsecure), 0x73),
+            (Property::Stream(PropertyStream::Log), 0x74),
         ];
 
         for (prop, id) in cases {
             assert_eq!(prop.id(), id);
             assert_eq!(Property::<NoVendor>::try_from(id), Ok(prop));
         }
+    }
+
+    #[test]
+    fn vendor_property_packed_len_matches_its_id() {
+        use crate::codec::vendor::test_vendor::{TestValue, TestVendor};
+
+        let prop = Property::<TestVendor>::Vendor(TestValue(513));
+        assert_eq!(prop.packed_len(), 2);
     }
 }
