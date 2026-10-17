@@ -15,8 +15,8 @@ const PROP_PHY_TX_POWER: u32 = 0x26;
 const PROP_MAC_RAW_STREAM_ENABLED: u32 = 0x37;
 const PROP_MAC_PROMISCUOUS_MODE: u32 = 0x38;
 const PROP_STREAM_DEBUG: u32 = 0x70;
-const PROP_STREAM_NET: u32 = 0x71;
-const PROP_STREAM_RAW: u32 = 0x72;
+const PROP_STREAM_RAW: u32 = 0x71;
+const PROP_STREAM_NET: u32 = 0x72;
 const PROP_STREAM_NET_INSECURE: u32 = 0x73;
 const PROP_STREAM_LOG: u32 = 0x74;
 
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn raw_mode_property_ids_round_trip() {
         let cases: [(Property, u32); 5] = [
-            (Property::Stream(PropertyStream::Raw), 0x72),
+            (Property::Stream(PropertyStream::Raw), 0x71),
             (Property::PhysicalEnabled, 0x20),
             (Property::PhysicalChannel, 0x21),
             (Property::MacRawStreamEnabled, 0x37),
