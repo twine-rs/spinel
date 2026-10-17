@@ -27,6 +27,8 @@ pub enum Error {
     DatatypeBool(u8),
     #[error("Datatype truncated: needed {needed} bytes, got {got}")]
     DatatypeTruncated { needed: usize, got: usize },
+    #[error("PSDU length invalid: {0}")]
+    PsduLength(usize),
     #[error("Invalid header: {0}")]
     Header(u8),
     #[error("Incorrect HDLC checksum: {0}")]

@@ -15,6 +15,11 @@ use crate::{Error, Status};
 /// Number of FCS bytes the radio appends to a transmitted frame.
 const FCS_LEN: usize = 2;
 
+/// Maximum PSDU length without the FCS, per IEEE 802.15.4.
+///
+/// The standard caps a PHY packet at 127 bytes including the 2-byte FCS.
+const MAX_PSDU_LEN: usize = 127 - FCS_LEN;
+
 /// Default RSSI when the receive metadata omits it, in dBm.
 const DEFAULT_RSSI: i8 = -128;
 
@@ -38,6 +43,10 @@ pub const RAW_FRAME_FLAG_DUPE: u16 = 0x0008;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RawTxConfig {
     /// Maximum number of backoff attempts before declaring CCA failure.
+    ///
+    /// The encoder always writes this field, so the device never applies its
+    /// own default. The value 4 matches the usual device default for direct
+    /// transmissions.
     pub max_csma_backoffs: u8,
 
     /// Maximum number of retries allowed after a transmission failure.
@@ -95,8 +104,13 @@ pub struct RawTxFrame {
 impl RawTxFrame {
     /// Encode the frame and metadata as a raw stream property value.
     ///
-    /// Returns the number of bytes that were written.
-    pub fn encode(&self, buffer: &mut BytesMut) -> usize {
+    /// Returns the number of bytes that were written. Errors when the PSDU is
+    /// longer than an 802.15.4 frame allows.
+    pub fn encode(&self, buffer: &mut BytesMut) -> Result<usize, Error> {
+        if self.psdu.len() > MAX_PSDU_LEN {
+            return Err(Error::PsduLength(self.psdu.len()));
+        }
+
         let mut num = SpinelU16::write_to_buffer((self.psdu.len() + FCS_LEN) as u16, buffer);
         buffer.extend_from_slice(&self.psdu);
         buffer.extend_from_slice(&[0u8; FCS_LEN]);
@@ -116,7 +130,7 @@ impl RawTxFrame {
             buffer,
         );
 
-        num
+        Ok(num)
     }
 }
 
@@ -279,9 +293,22 @@ mod tests {
         };
 
         let mut buffer = BytesMut::new();
-        let written = frame.encode(&mut buffer);
+        let written = frame.encode(&mut buffer).unwrap();
         assert_eq!(written, buffer.len());
         assert_eq!(&buffer[..], TX_DEFAULT_WIRE_FMT);
+    }
+
+    #[test]
+    fn tx_oversized_psdu_errors() {
+        let frame = RawTxFrame {
+            psdu: Bytes::from(alloc::vec![0u8; 126]),
+            channel: 11,
+            config: RawTxConfig::default(),
+        };
+
+        let mut buffer = BytesMut::new();
+        assert_eq!(frame.encode(&mut buffer), Err(Error::PsduLength(126)));
+        assert!(buffer.is_empty());
     }
 
     #[test]
@@ -301,7 +328,7 @@ mod tests {
         };
 
         let mut buffer = BytesMut::new();
-        frame.encode(&mut buffer);
+        frame.encode(&mut buffer).unwrap();
         assert_eq!(
             &buffer[..],
             &[
