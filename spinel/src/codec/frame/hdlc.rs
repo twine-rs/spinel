@@ -89,12 +89,22 @@ impl<V: Vendor> HdlcLiteFrame<V> {
     ///
     /// todo: limit?
     pub fn encode(self, buffer: &mut BytesMut) -> Result<(), Error> {
-        // todo: check for escape, new BytesMut first then write to input buffer
+        // The checksum covers the unescaped frame bytes. Escaping applies to
+        // the frame bytes and the checksum alike.
+        let mut raw = BytesMut::new();
+        self.frame.encode(&mut raw)?;
+        let crc = State::<crc16::X_25>::calculate(&raw);
+        raw.put_u16_le(crc);
 
         buffer.put_u8(Self::FRAME_DELIMITER_FLAG);
-        self.frame.encode(buffer)?;
-        let crc = State::<crc16::X_25>::calculate(&buffer[1..]);
-        buffer.put_u16_le(crc);
+        for byte in raw.iter() {
+            if Self::requires_escape(*byte) {
+                buffer.put_u8(Self::ESCAPE_BYTE_FLAG);
+                buffer.put_u8(*byte ^ 0x20);
+            } else {
+                buffer.put_u8(*byte);
+            }
+        }
         buffer.put_u8(Self::FRAME_DELIMITER_FLAG);
 
         Ok(())
@@ -123,17 +133,16 @@ impl<V: Vendor> HdlcLiteFrame<V> {
 
         let mut packet = BytesMut::new();
 
-        // Iterate over the bytes and escape any that require it
+        // Iterate over the frame bytes without the trailing delimiter and
+        // undo the escapes. Only the escape byte starts an escape. Other
+        // bytes pass through, so the checksum bytes come out corrected too.
         let mut need_escape = false;
-        for byte in bytes.iter() {
-            if Self::requires_escape(*byte) {
-                // Byte requires fixing an escape code or the end of the packet has been reached.
-                // Note: The final delimiter is not included in the packet.
+        for byte in bytes[..bytes.len() - 1].iter() {
+            if *byte == Self::ESCAPE_BYTE_FLAG {
                 need_escape = true;
                 continue;
             }
 
-            // CRC bytes are also escaped and need correction
             let mut byte_to_write = *byte;
             if need_escape {
                 byte_to_write ^= 0x20;
@@ -145,6 +154,9 @@ impl<V: Vendor> HdlcLiteFrame<V> {
 
         // Split the payload and end of frame data
         let pkt_len = packet.len();
+        if pkt_len < 2 {
+            return Err(Error::PacketLength(pkt_len));
+        }
         let end_frame_data = packet.split_off(pkt_len - 2);
 
         let pkt_crc = u16::from_le_bytes([end_frame_data[0], end_frame_data[1]]);
@@ -350,6 +362,46 @@ mod tests {
         let mut buffer = BytesMut::with_capacity(4096);
         hdlc_frame.encode(&mut buffer).unwrap();
         assert_eq!(buffer, Bytes::from_static(&TEST_RESP_NCP_VERSION_ARRAY));
+    }
+
+    #[test]
+    fn escape_set_bytes_round_trip() {
+        // The value holds every byte the encoder must escape.
+        let value = Bytes::from_static(&[0x7E, 0x7D, 0x11, 0x13, 0xF8]);
+        let frame = Frame::<NoVendor>::new(
+            Header::new(0x00, 0x01),
+            Command::PropertyValueIs(Property::HardwareAddress, value),
+        );
+
+        let mut buffer = BytesMut::new();
+        HdlcLiteFrame::new(frame.clone()).encode(&mut buffer).unwrap();
+
+        // Between the delimiters, an escape-set byte only appears as the
+        // escape marker itself, and the byte after a marker is XOR-corrected
+        // data.
+        let mut escaped = false;
+        for byte in &buffer[1..buffer.len() - 1] {
+            if escaped {
+                escaped = false;
+            } else if *byte == 0x7D {
+                escaped = true;
+            } else {
+                assert!(!HdlcLiteFrame::<NoVendor>::requires_escape(*byte));
+            }
+        }
+        assert!(!escaped);
+
+        let decoded = HdlcLiteFrame::<NoVendor>::decode(&buffer.freeze()).unwrap();
+        assert_eq!(decoded.into_inner(), frame);
+    }
+
+    #[test]
+    fn decode_rejects_empty_packet() {
+        let bytes = Bytes::from_static(&[0x7E, 0x7E]);
+        assert_eq!(
+            HdlcLiteFrame::<NoVendor>::decode(&bytes),
+            Err(Error::PacketLength(0))
+        );
     }
 
     #[test]
