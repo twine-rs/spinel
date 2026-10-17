@@ -400,7 +400,9 @@ mod tests {
         );
 
         let mut buffer = BytesMut::new();
-        HdlcLiteFrame::new(frame.clone()).encode(&mut buffer).unwrap();
+        HdlcLiteFrame::new(frame.clone())
+            .encode(&mut buffer)
+            .unwrap();
 
         // Between the delimiters, an escape-set byte only appears as the
         // escape marker itself, and the byte after a marker is XOR-corrected
@@ -431,7 +433,9 @@ mod tests {
         );
 
         let mut buffer = BytesMut::new();
-        HdlcLiteFrame::new(frame.clone()).encode(&mut buffer).unwrap();
+        HdlcLiteFrame::new(frame.clone())
+            .encode(&mut buffer)
+            .unwrap();
         let decoded = HdlcLiteFrame::<NoVendor>::decode(&buffer.freeze()).unwrap();
         assert_eq!(decoded.into_inner(), frame);
     }
