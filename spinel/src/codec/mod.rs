@@ -13,8 +13,9 @@ pub(crate) mod vendor;
 
 pub use command::Command;
 pub use datatype::{
-    write_caps, Capability, CapabilityIter, PackedU32, PromiscuousMode, ResetReason, SpinelBool,
-    SpinelU8, Status,
+    write_caps, Capability, CapabilityIter, PackedU32, PromiscuousMode, RawRxFrame, RawTxConfig,
+    RawTxDone, RawTxFrame, ResetReason, SpinelBool, SpinelData, SpinelI8, SpinelU16, SpinelU32,
+    SpinelU64, SpinelU8, Status, RAW_FRAME_FLAG_BAD_FCS, RAW_FRAME_FLAG_DUPE, RAW_FRAME_FLAG_TX,
 };
 pub use frame::{Frame, HdlcLiteFrame, Header};
 pub use property::{Property, PropertyStream};
