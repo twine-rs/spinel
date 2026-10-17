@@ -273,10 +273,14 @@ impl<V: Vendor> RawTxDone<V> {
             Err(_) => false,
         };
 
-        // The device packs an empty frame structure when there is no ack, so
-        // an empty PSDU means no acknowledgment arrived.
+        // The device writes an ack frame only on a successful transmit, and
+        // a security key index and frame counter can trail the flags in both
+        // outcomes. Decoding the ack only on success keeps the tail of a
+        // failed transmit from being mistaken for one. The device packs an
+        // empty frame structure when no acknowledgment arrived, so an empty
+        // PSDU also means no ack.
         let ack_bytes = buffer.slice(offset..);
-        let ack = if ack_bytes.is_empty() {
+        let ack = if status != Status::Ok || ack_bytes.is_empty() {
             None
         } else {
             Some(RawRxFrame::decode(&ack_bytes)?).filter(|a| !a.psdu.is_empty())
@@ -466,6 +470,23 @@ mod tests {
         assert_eq!(done.status, Status::CcaFailure);
         assert!(!done.frame_pending);
         assert!(!done.header_updated);
+        assert_eq!(done.ack, None);
+    }
+
+    #[test]
+    fn tx_done_error_with_security_tail_decodes() {
+        // A failed security-processed transmit trails a key index and a
+        // frame counter with no ack frame before them.
+        let mut buffer = BytesMut::new();
+        PackedU32::write_to_buffer(17, &mut buffer);
+        SpinelBool::write_to_buffer(false, &mut buffer);
+        SpinelBool::write_to_buffer(true, &mut buffer);
+        SpinelU8::write_to_buffer(0x01, &mut buffer);
+        SpinelU32::write_to_buffer(0x0000_1234, &mut buffer);
+
+        let done = RawTxDone::<NoVendor>::decode(&buffer.freeze()).unwrap();
+        assert_eq!(done.status, Status::NoAck);
+        assert!(done.header_updated);
         assert_eq!(done.ack, None);
     }
 }
