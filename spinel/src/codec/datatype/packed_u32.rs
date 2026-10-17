@@ -70,7 +70,7 @@ impl PackedU32 {
 
         for (i, byte) in bytes.iter().enumerate() {
             // The spinel protocol uses a maximum of 3 bytes to represent a u32
-            // Bail after reading more than 3 bytes.
+            // Stop after reading 3 bytes.
             if i >= 3 {
                 break;
             }
