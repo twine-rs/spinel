@@ -634,11 +634,28 @@ mod tests {
         let (handle, mut device) = setup();
         let mut reset_rx = handle.subscribe_reset_msg().await.unwrap();
 
-        // A non-reset status must not resolve as a reset notification.
+        // Hold a request open across the unsolicited status.
+        let pending_handle = handle.clone();
+        let pending = tokio::spawn(async move { pending_handle.noop().await });
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+
+        // A non-reset status must not resolve as a reset notification and
+        // must not clear the pending request.
         device
             .send(unsolicited_status(Status::InvalidState))
             .await
             .unwrap();
+
+        // The pending request still resolves with its response.
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::last_status(Status::Ok),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(pending.await.unwrap(), Ok(()));
 
         // A status in the reset-reason range must broadcast a reset.
         device
