@@ -23,6 +23,10 @@ cfg_if::cfg_if! {
 pub enum Error {
     #[error("Unable to parse UTF8 characters")]
     DatatypeParseU8(#[from] core::str::Utf8Error),
+    #[error("Invalid boolean byte: {0}")]
+    DatatypeBool(u8),
+    #[error("Datatype truncated: needed {needed} bytes, got {got}")]
+    DatatypeTruncated { needed: usize, got: usize },
     #[error("Invalid header: {0}")]
     Header(u8),
     #[error("Incorrect HDLC checksum: {0}")]
