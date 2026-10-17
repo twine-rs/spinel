@@ -55,6 +55,8 @@ pub enum Error {
     PacketLength(usize),
     #[error("Device lacks required capability: {0}")]
     CapabilityMissing(u32),
+    #[error("Device reset while the request was pending")]
+    DeviceReset,
     #[error("Device stack is up, bring the device network interface down first")]
     DeviceStackUp,
     #[error("No free transaction ID, all requests are pending")]

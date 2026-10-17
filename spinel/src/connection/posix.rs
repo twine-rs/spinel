@@ -902,7 +902,12 @@ where
     fn reset_tid(&mut self) {
         self.tid = TID_START;
         self.tx_radio_tid = None;
-        self.lut.clear();
+
+        // Resolve every pending request so callers learn about the reset
+        // instead of a dropped channel.
+        for (_, pending) in self.lut.drain() {
+            let _ = pending.sender.send(Err(Error::DeviceReset));
+        }
     }
 }
 
@@ -927,6 +932,24 @@ mod tests {
             Header::new(0, 0),
             Command::PropertyValueIs(Property::LastStatus, value.freeze()),
         )
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reset_resolves_pending_requests() {
+        let (handle, mut device) = setup();
+
+        let pending_handle = handle.clone();
+        let pending = tokio::spawn(async move { pending_handle.noop().await });
+        let _request = device.next().await.unwrap().unwrap();
+
+        // A reset-range status resolves the pending request with the reset
+        // error.
+        device
+            .send(unsolicited_status(Status::Unknown(114)))
+            .await
+            .unwrap();
+
+        assert_eq!(pending.await.unwrap(), Err(Error::DeviceReset));
     }
 
     #[tokio::test(start_paused = true)]
