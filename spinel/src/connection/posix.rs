@@ -226,9 +226,10 @@ impl PosixSpinelHostHandle {
     /// Set a property value on the device and await the outcome.
     ///
     /// Resolves with the echoed value when the device accepts the set. A
-    /// `LastStatus` reply on the same transaction ID resolves as
-    /// [`Error::Status`] with the reported code.
-    async fn set_property(&self, prop: Property, value: Bytes) -> Result<Bytes, Error> {
+    /// device that confirms with a `LastStatus` of `Ok` resolves with an
+    /// empty value. An error `LastStatus` on the same transaction ID resolves
+    /// as [`Error::Status`] with the reported code.
+    pub async fn set_property(&self, prop: Property, value: Bytes) -> Result<Bytes, Error> {
         let (sender, receiver) = oneshot::channel();
 
         self.transaction
@@ -246,7 +247,11 @@ impl PosixSpinelHostHandle {
             Command::PropertyValueIs(p, v) if p == prop => Ok(v),
             Command::PropertyValueIs(Property::LastStatus, v) => {
                 let (code, _) = PackedU32::decode_checked(&v)?;
-                Err(Error::Status(code))
+                if Status::<NoVendor>::from(code) == Status::Ok {
+                    Ok(Bytes::new())
+                } else {
+                    Err(Error::Status(code))
+                }
             }
             _ => Err(Error::UnexpectedResponse(cmd_id)),
         }
@@ -762,6 +767,27 @@ mod tests {
             .unwrap();
 
         assert_eq!(set.await.unwrap(), Err(Error::Status(4)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn property_set_accepts_ok_status_reply() {
+        let (handle, mut device) = setup();
+
+        let set_handle = handle.clone();
+        let set = tokio::spawn(async move { set_handle.set_physical_channel(11).await });
+
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::last_status(Status::Ok),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(set.await.unwrap(), Ok(()));
     }
 
     #[tokio::test(start_paused = true)]
