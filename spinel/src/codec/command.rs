@@ -183,17 +183,17 @@ impl<V: Vendor> Command<V> {
             }
             CMD_PROP_VALUE_SET => {
                 let prop = Property::try_from(payload)?;
-                let value = Bytes::copy_from_slice(&payload[prop.packed_len()..]);
+                let value = buffer.slice(cmd_id_len + prop.packed_len()..);
                 Ok(Command::PropertyValueSet(prop, value))
             }
             CMD_PROP_VALUE_IS => {
                 let prop = Property::try_from(payload)?;
-                let value = Bytes::copy_from_slice(&payload[prop.packed_len()..]);
+                let value = buffer.slice(cmd_id_len + prop.packed_len()..);
                 Ok(Command::PropertyValueIs(prop, value))
             }
             // Any unassigned command ID falls through to the vendor profile.
             other => match V::Command::try_from_id(other) {
-                Ok(vc) => Ok(Command::Vendor(vc, Bytes::copy_from_slice(payload))),
+                Ok(vc) => Ok(Command::Vendor(vc, buffer.slice(cmd_id_len..))),
                 Err(_) => Err(Error::Command(other)),
             },
         }
