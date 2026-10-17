@@ -46,6 +46,7 @@ enum PosixSpinelHostMessage {
     Reset { reply: OneshotFrameReply },
     LastStatus { reply: OneshotFrameReply },
     RadioFirmwareVersion { reply: OneshotFrameReply },
+    SetProperty { prop: Property, value: Bytes, reply: OneshotFrameReply },
     SubscribeResetMessage { reply: BroadcastFrameReply },
     SubscribeDebugBroadcast { reply: BroadcastFrameReply },
     SubscribeNetBroadcast { reply: BroadcastFrameReply },
@@ -61,6 +62,9 @@ impl fmt::Display for PosixSpinelHostMessage {
             PosixSpinelHostMessage::LastStatus { .. } => write!(f, "LastStatus"),
             PosixSpinelHostMessage::RadioFirmwareVersion { .. } => {
                 write!(f, "RadioFirmwareVersion")
+            }
+            PosixSpinelHostMessage::SetProperty { prop, .. } => {
+                write!(f, "SetProperty({prop})")
             }
             PosixSpinelHostMessage::SubscribeResetMessage { .. } => {
                 write!(f, "SubscribeResetMessage")
@@ -217,6 +221,83 @@ impl PosixSpinelHostHandle {
 
         // Don't wait for the response as the device will respond with a [`Command::PropertyValueIs`](crate::Command::PropertyValueIs) message.
         Ok(())
+    }
+
+    /// Set a property value on the device and await the outcome.
+    ///
+    /// Resolves with the echoed value when the device accepts the set. A
+    /// `LastStatus` reply on the same transaction ID resolves as
+    /// [`Error::Status`] with the reported code.
+    async fn set_property(&self, prop: Property, value: Bytes) -> Result<Bytes, Error> {
+        let (sender, receiver) = oneshot::channel();
+
+        self.transaction
+            .send(PosixSpinelHostMessage::SetProperty {
+                prop: prop.clone(),
+                value,
+                reply: sender,
+            })
+            .map_err(|_| Error::HostConnectionSend)?;
+
+        let response = receiver.await??.await.map_err(Error::from)??;
+
+        let cmd_id = response.command().id();
+        match response.command {
+            Command::PropertyValueIs(p, v) if p == prop => Ok(v),
+            Command::PropertyValueIs(Property::LastStatus, v) => {
+                let (code, _) = PackedU32::decode_checked(&v)?;
+                Err(Error::Status(code))
+            }
+            _ => Err(Error::UnexpectedResponse(cmd_id)),
+        }
+    }
+
+    /// Set whether the radio physical layer is enabled.
+    ///
+    /// Encodes the value as the Spinel `b` datatype, one byte 0x00 or 0x01.
+    pub async fn set_physical_enabled(&self, enabled: bool) -> Result<(), Error> {
+        let mut value = bytes::BytesMut::new();
+        crate::SpinelBool::write_to_buffer(enabled, &mut value);
+        self.set_property(Property::PhysicalEnabled, value.freeze())
+            .await
+            .map(|_| ())
+    }
+
+    /// Set the 802.15.4 channel the radio uses.
+    ///
+    /// Encodes the value as the Spinel `C` datatype, one byte.
+    pub async fn set_physical_channel(&self, channel: u8) -> Result<(), Error> {
+        let mut value = bytes::BytesMut::new();
+        crate::SpinelU8::write_to_buffer(channel, &mut value);
+        self.set_property(Property::PhysicalChannel, value.freeze())
+            .await
+            .map(|_| ())
+    }
+
+    /// Set whether the device forwards received raw frames to the host.
+    ///
+    /// Encodes the value as the Spinel `b` datatype, one byte 0x00 or 0x01.
+    pub async fn set_mac_raw_stream_enabled(&self, enabled: bool) -> Result<(), Error> {
+        let mut value = bytes::BytesMut::new();
+        crate::SpinelBool::write_to_buffer(enabled, &mut value);
+        self.set_property(Property::MacRawStreamEnabled, value.freeze())
+            .await
+            .map(|_| ())
+    }
+
+    /// Set the MAC promiscuous mode of the radio.
+    ///
+    /// Encodes the mode as the Spinel `C` datatype, one byte with the mode's
+    /// numeric value.
+    pub async fn set_mac_promiscuous_mode(
+        &self,
+        mode: crate::PromiscuousMode,
+    ) -> Result<(), Error> {
+        let mut value = bytes::BytesMut::new();
+        crate::SpinelU8::write_to_buffer(u8::from(mode), &mut value);
+        self.set_property(Property::MacPromiscuousMode, value.freeze())
+            .await
+            .map(|_| ())
     }
 
     /// Internal method to send a request to the host connection actor.
@@ -471,6 +552,10 @@ where
                 self.send_request(Command::PropertyValueGet(Property::NcpVersion), reply)
                     .await;
             }
+            PosixSpinelHostMessage::SetProperty { prop, value, reply } => {
+                self.send_request(Command::PropertyValueSet(prop, value), reply)
+                    .await;
+            }
             PosixSpinelHostMessage::SubscribeResetMessage { reply } => {
                 let rx = self.reset_broadcast.subscribe();
                 let _send_frame_res = reply.send(Ok(rx));
@@ -722,6 +807,56 @@ mod tests {
         let frame = rx.recv().await.unwrap();
         assert_eq!(frame.header().iid(), 0);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn property_set_resolves_on_echo() {
+        let (handle, mut device) = setup();
+
+        let set_handle = handle.clone();
+        let set = tokio::spawn(async move { set_handle.set_physical_channel(11).await });
+
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+        assert_eq!(
+            request.command(),
+            Command::PropertyValueSet(Property::PhysicalChannel, Bytes::from_static(&[0x0B]))
+        );
+
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::PropertyValueIs(Property::PhysicalChannel, Bytes::from_static(&[0x0B])),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(set.await.unwrap(), Ok(()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn property_set_resolves_error_status() {
+        let (handle, mut device) = setup();
+
+        let set_handle = handle.clone();
+        let set = tokio::spawn(async move { set_handle.set_physical_enabled(true).await });
+
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+        assert_eq!(
+            request.command(),
+            Command::PropertyValueSet(Property::PhysicalEnabled, Bytes::from_static(&[0x01]))
+        );
+
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::last_status(Status::InvalidState),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(set.await.unwrap(), Err(Error::Status(4)));
     }
 
     #[tokio::test(start_paused = true)]
