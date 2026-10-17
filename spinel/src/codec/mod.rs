@@ -13,7 +13,8 @@ pub(crate) mod vendor;
 
 pub use command::Command;
 pub use datatype::{
-    write_caps, Capability, CapabilityIter, PackedU32, ResetReason, SpinelBool, SpinelU8, Status,
+    write_caps, Capability, CapabilityIter, PackedU32, PromiscuousMode, ResetReason, SpinelBool,
+    SpinelU8, Status,
 };
 pub use frame::{Frame, HdlcLiteFrame, Header};
 pub use property::{Property, PropertyStream};
