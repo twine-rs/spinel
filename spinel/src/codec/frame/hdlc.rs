@@ -28,7 +28,7 @@ impl<V: Vendor> HdlcLiteFrame<V> {
 
     /// Find the [`HdlcLiteFrame`] delimiter.
     ///
-    /// This is useful for syncronizing the HDLC frames before begining to
+    /// This is useful for synchronizing the HDLC frames before starting to
     /// process the frame (generally when decoding).
     ///
     /// Returns the positional index of the frame delimiter. The next index
@@ -103,7 +103,7 @@ impl<V: Vendor> HdlcLiteFrame<V> {
     /// Decode a [`HdlcLiteFrame`] from a buffer of [`Bytes`].
     ///
     /// This function expects an aligned frame in the bytes buffer, including delimiters and CRC.
-    /// It is the responsibility of the caller to ensure that the data stream is syncronized and
+    /// It is the responsibility of the caller to ensure that the data stream is synchronized and
     /// the frame is complete before calling this function.
     pub fn decode(bytes: &Bytes) -> Result<Self, Error> {
         if let Some(f) = bytes.first() {
