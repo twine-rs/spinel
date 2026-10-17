@@ -102,3 +102,48 @@ impl Vendor for NoVendor {
     type Capability = Never;
     type Status = Never;
 }
+
+#[cfg(test)]
+pub(crate) mod test_vendor {
+    use super::*;
+
+    /// A vendor value that carries an arbitrary wire ID for tests.
+    #[derive(Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub(crate) struct TestValue(pub(crate) u32);
+
+    impl VendorValue for TestValue {
+        fn id(&self) -> u32 {
+            self.0
+        }
+
+        fn try_from_id(id: u32) -> Result<Self, Error> {
+            Ok(TestValue(id))
+        }
+    }
+
+    /// A vendor profile for tests that accepts every unassigned wire ID.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub(crate) struct TestVendor;
+
+    impl Vendor for TestVendor {
+        type Property = TestValue;
+        type Command = TestValue;
+        type Capability = TestValue;
+        type Status = TestValue;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_vendor::TestValue;
+    use super::*;
+
+    #[test]
+    fn vendor_value_packed_len_matches_the_packed_id() {
+        assert_eq!(TestValue(5).packed_len(), 1);
+        assert_eq!(TestValue(513).packed_len(), 2);
+        assert_eq!(TestValue(20_000).packed_len(), 3);
+    }
+}

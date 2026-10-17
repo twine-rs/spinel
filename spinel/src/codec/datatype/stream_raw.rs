@@ -324,6 +324,22 @@ mod tests {
     }
 
     #[test]
+    fn tx_max_length_psdu_encodes() {
+        // 125 bytes is the largest PSDU, because the FCS fills the frame to
+        // the 127-byte 802.15.4 cap. The odd length also pins the byte count.
+        let frame = RawTxFrame {
+            psdu: Bytes::from(alloc::vec![0u8; 125]),
+            channel: 11,
+            config: RawTxConfig::default(),
+        };
+
+        let mut buffer = BytesMut::new();
+        let written = frame.encode(&mut buffer).unwrap();
+        assert_eq!(written, buffer.len());
+        assert_eq!(buffer.len(), 2 + 127 + 16);
+    }
+
+    #[test]
     fn tx_oversized_psdu_errors() {
         let frame = RawTxFrame {
             psdu: Bytes::from(alloc::vec![0u8; 126]),
