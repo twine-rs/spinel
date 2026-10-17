@@ -1,11 +1,13 @@
 mod caps;
 mod packed_u32;
 mod primitive;
+mod promiscuous;
 mod status;
 
 pub use caps::{write_caps, Capability, CapabilityIter};
 pub use packed_u32::PackedU32;
 pub use primitive::{SpinelBool, SpinelU8};
+pub use promiscuous::PromiscuousMode;
 pub use status::{ResetReason, Status};
 
 /// Type alias for `[u8]`.

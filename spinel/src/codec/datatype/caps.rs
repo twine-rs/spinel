@@ -11,10 +11,17 @@ use crate::codec::vendor::{NoVendor, Vendor, VendorValue};
 use crate::codec::PackedU32;
 use crate::Error;
 
+const CAP_MAC_RAW: u32 = 513;
+
 /// A device capability.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Capability<V: Vendor = NoVendor> {
+    /// The device supports raw 802.15.4 frame transmit and receive.
+    ///
+    /// Raw frames flow over [`PropertyStream::Raw`](crate::PropertyStream).
+    MacRaw,
+
     /// A vendor-defined capability.
     Vendor(V::Capability),
 
@@ -29,6 +36,7 @@ impl<V: Vendor> Capability<V> {
     /// The ID for this capability on the wire.
     pub fn id(&self) -> u32 {
         match self {
+            Capability::MacRaw => CAP_MAC_RAW,
             Capability::Vendor(v) => v.id(),
             Capability::Unknown(id) => *id,
         }
@@ -37,9 +45,13 @@ impl<V: Vendor> Capability<V> {
 
 impl<V: Vendor> From<u32> for Capability<V> {
     fn from(id: u32) -> Self {
-        match V::Capability::try_from_id(id) {
-            Ok(v) => Capability::Vendor(v),
-            Err(_) => Capability::Unknown(id),
+        match id {
+            CAP_MAC_RAW => Capability::MacRaw,
+            // Any unassigned ID falls through to the vendor profile.
+            other => match V::Capability::try_from_id(other) {
+                Ok(v) => Capability::Vendor(v),
+                Err(_) => Capability::Unknown(other),
+            },
         }
     }
 }
@@ -116,6 +128,20 @@ mod tests {
     #[test]
     fn empty_value_yields_no_caps() {
         assert_eq!(CapabilityIter::<NoVendor>::new(&[]).count(), 0);
+    }
+
+    #[test]
+    fn mac_raw_cap_decodes_from_list() {
+        // 513 packs to [0x81, 0x04].
+        let caps = [Capability::<NoVendor>::MacRaw];
+        let mut buf = BytesMut::new();
+        write_caps(&caps, &mut buf);
+        assert_eq!(&buf[..], &[0x81, 0x04]);
+
+        let decoded = CapabilityIter::<NoVendor>::new(&buf)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(decoded, caps);
     }
 
     #[test]

@@ -18,7 +18,7 @@ cfg_if::cfg_if! {
 
 pub use codec::{
     write_caps, Capability, CapabilityIter, Command, Frame, HdlcLiteFrame, Header, MaybeFormat,
-    Never, NoVendor, PackedU32, Property, PropertyStream, ResetReason, SpinelBool, SpinelU8,
-    Status, Vendor, VendorValue,
+    Never, NoVendor, PackedU32, PromiscuousMode, Property, PropertyStream, ResetReason, SpinelBool,
+    SpinelU8, Status, Vendor, VendorValue,
 };
 pub use error::Error;
