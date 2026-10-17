@@ -225,7 +225,7 @@ mod tests {
         let random_index = rng.gen_range(0..test_vector.len());
         test_vector[random_index] = 0x7E;
 
-        // Determine if the frame delimiter is found in the correct position
+        // Check that the frame delimiter is in the expected position
         let bytes = Bytes::from(test_vector);
         let index = HdlcLiteFrame::<NoVendor>::find_frame_delimiter(&bytes);
         assert_eq!(index, Some(random_index));

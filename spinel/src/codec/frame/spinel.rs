@@ -100,12 +100,12 @@ impl<V: Vendor> Frame<V> {
         })
     }
 
-    /// Retrieve a copy of the [`Header`] from the [`Frame`].
+    /// Get a copy of the [`Header`] from the [`Frame`].
     pub fn header(&self) -> Header {
         self.header.clone()
     }
 
-    /// Retrieve a copy of the [`Command`] from the [`Frame`].
+    /// Get a copy of the [`Command`] from the [`Frame`].
     pub fn command(&self) -> Command<V> {
         self.command.clone()
     }
