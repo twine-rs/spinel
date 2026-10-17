@@ -225,8 +225,10 @@ impl RawRxFrame {
 
 /// The result of a raw 802.15.4 transmit.
 ///
-/// Decoded from the raw stream property value the device returns on the
-/// transaction ID of the transmit request.
+/// The device reports the transmit outcome as a `LastStatus` value on the
+/// transaction ID of the transmit request. The payload carries the status,
+/// the frame-pending flag, the header-updated flag, and the acknowledgment
+/// frame when the transmit requested one.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RawTxDone<V: Vendor = NoVendor> {
@@ -236,35 +238,54 @@ pub struct RawTxDone<V: Vendor = NoVendor> {
     /// Whether the acknowledgment had the frame-pending bit set.
     pub frame_pending: bool,
 
+    /// Whether the device updated the frame header before the transmit.
+    pub header_updated: bool,
+
     /// The received acknowledgment frame, when the transmit requested one.
     pub ack: Option<RawRxFrame>,
 }
 
 impl<V: Vendor> RawTxDone<V> {
-    /// Decode a transmit-done property value.
+    /// Decode a transmit-done value.
     ///
-    /// The status is required. The frame-pending flag and the acknowledgment
-    /// frame are optional.
+    /// The status is required. The flags and the acknowledgment frame are
+    /// optional, so a plain error status decodes too.
     pub fn decode(buffer: &Bytes) -> Result<Self, Error> {
         let (status, consumed) = PackedU32::decode_checked(buffer)?;
         let status = Status::from(status);
-        let rest = &buffer[consumed..];
+        let mut offset = consumed;
+        let mut rest = &buffer[consumed..];
 
-        let (frame_pending, pending_len) = match SpinelBool::decode(rest) {
-            Ok((value, len)) => (value, len),
-            Err(_) => (false, rest.len()),
+        let frame_pending = match SpinelBool::decode(rest) {
+            Ok((value, len)) => {
+                rest = &rest[len..];
+                offset += len;
+                value
+            }
+            Err(_) => false,
         };
 
-        let ack_bytes = buffer.slice(consumed + pending_len..);
+        let header_updated = match SpinelBool::decode(rest) {
+            Ok((value, len)) => {
+                offset += len;
+                value
+            }
+            Err(_) => false,
+        };
+
+        // The device packs an empty frame structure when there is no ack, so
+        // an empty PSDU means no acknowledgment arrived.
+        let ack_bytes = buffer.slice(offset..);
         let ack = if ack_bytes.is_empty() {
             None
         } else {
-            Some(RawRxFrame::decode(&ack_bytes)?)
+            Some(RawRxFrame::decode(&ack_bytes)?).filter(|a| !a.psdu.is_empty())
         };
 
         Ok(Self {
             status,
             frame_pending,
+            header_updated,
             ack,
         })
     }
@@ -411,11 +432,13 @@ mod tests {
         let mut buffer = BytesMut::new();
         PackedU32::write_to_buffer(0, &mut buffer);
         SpinelBool::write_to_buffer(true, &mut buffer);
+        SpinelBool::write_to_buffer(false, &mut buffer);
         SpinelData::write_to_buffer(&[0x02, 0x00, 0xCC], &mut buffer);
 
         let done = RawTxDone::<NoVendor>::decode(&buffer.freeze()).unwrap();
         assert_eq!(done.status, Status::Ok);
         assert!(done.frame_pending);
+        assert!(!done.header_updated);
         assert_eq!(&done.ack.unwrap().psdu[..], &[0x02, 0x00, 0xCC]);
     }
 
@@ -424,10 +447,12 @@ mod tests {
         let mut buffer = BytesMut::new();
         PackedU32::write_to_buffer(0, &mut buffer);
         SpinelBool::write_to_buffer(false, &mut buffer);
+        SpinelBool::write_to_buffer(true, &mut buffer);
 
         let done = RawTxDone::<NoVendor>::decode(&buffer.freeze()).unwrap();
         assert_eq!(done.status, Status::Ok);
         assert!(!done.frame_pending);
+        assert!(done.header_updated);
         assert_eq!(done.ack, None);
     }
 
@@ -440,6 +465,7 @@ mod tests {
         let done = RawTxDone::<NoVendor>::decode(&buffer.freeze()).unwrap();
         assert_eq!(done.status, Status::CcaFailure);
         assert!(!done.frame_pending);
+        assert!(!done.header_updated);
         assert_eq!(done.ack, None);
     }
 }
