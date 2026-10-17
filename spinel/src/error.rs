@@ -53,6 +53,10 @@ pub enum Error {
     CapsMalformed,
     #[error("Incorrect packet length: {0}")]
     PacketLength(usize),
+    #[error("Device lacks required capability: {0}")]
+    CapabilityMissing(u32),
+    #[error("Device stack is up, bring the device network interface down first")]
+    DeviceStackUp,
     #[error("No free transaction ID, all requests are pending")]
     RequestBusy,
     #[error("No response received within the request timeout")]

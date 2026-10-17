@@ -2,7 +2,7 @@ use core::fmt;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::{sink::SinkExt, stream::StreamExt};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -19,12 +19,38 @@ use tokio_util::codec::{Decoder, Framed};
 use super::SpinelHostConnection;
 use crate::{
     codec::{NoVendor, PackedU32, ResetReason, Status},
-    Command, Error, Frame, HdlcCodec, Header, Property, PropertyStream,
+    Capability, CapabilityIter, Command, Error, Frame, HdlcCodec, Header, PromiscuousMode,
+    Property, PropertyStream, RawRxFrame, RawTxDone, RawTxFrame, SpinelBool, SpinelU8,
 };
 
 type FrameResult = Result<Frame, Error>;
 type OneshotFrameReply = oneshot::Sender<Result<oneshot::Receiver<FrameResult>, Error>>;
 type BroadcastFrameReply = oneshot::Sender<Result<Receiver<Frame>, Error>>;
+type BroadcastRawRxReply = oneshot::Sender<Result<Receiver<RawRxFrame>, Error>>;
+
+/// Timeouts for requests sent to the device.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConnectionConfig {
+    /// Timeout for property requests.
+    ///
+    /// The default gives the device two seconds to answer a property request.
+    pub property_timeout: Duration,
+
+    /// Timeout for a raw transmit awaiting its transmit-done report.
+    ///
+    /// Longer than the property timeout, because a transmit can sit in CSMA
+    /// backoffs and retries before it completes.
+    pub tx_timeout: Duration,
+}
+
+impl Default for ConnectionConfig {
+    fn default() -> Self {
+        Self {
+            property_timeout: Duration::from_secs(2),
+            tx_timeout: Duration::from_secs(5),
+        }
+    }
+}
 
 /// A TID with a value of zero is reserved for messages where a response is not expected.
 ///
@@ -42,16 +68,49 @@ struct PendingRequest {
 
 #[derive(Debug)]
 enum PosixSpinelHostMessage {
-    Noop { reply: OneshotFrameReply },
-    Reset { reply: OneshotFrameReply },
-    LastStatus { reply: OneshotFrameReply },
-    RadioFirmwareVersion { reply: OneshotFrameReply },
-    SetProperty { prop: Property, value: Bytes, reply: OneshotFrameReply },
-    SubscribeResetMessage { reply: BroadcastFrameReply },
-    SubscribeDebugBroadcast { reply: BroadcastFrameReply },
-    SubscribeNetBroadcast { reply: BroadcastFrameReply },
-    SubscribeNetInsecureBroadcast { reply: BroadcastFrameReply },
-    SubscribeLogBroadcast { reply: BroadcastFrameReply },
+    Noop {
+        reply: OneshotFrameReply,
+    },
+    Reset {
+        reply: OneshotFrameReply,
+    },
+    LastStatus {
+        reply: OneshotFrameReply,
+    },
+    RadioFirmwareVersion {
+        reply: OneshotFrameReply,
+    },
+    SetProperty {
+        prop: Property,
+        value: Bytes,
+        reply: OneshotFrameReply,
+    },
+    GetProperty {
+        prop: Property,
+        reply: OneshotFrameReply,
+    },
+    TransmitRaw {
+        payload: Bytes,
+        reply: OneshotFrameReply,
+    },
+    SubscribeRawRx {
+        reply: BroadcastRawRxReply,
+    },
+    SubscribeResetMessage {
+        reply: BroadcastFrameReply,
+    },
+    SubscribeDebugBroadcast {
+        reply: BroadcastFrameReply,
+    },
+    SubscribeNetBroadcast {
+        reply: BroadcastFrameReply,
+    },
+    SubscribeNetInsecureBroadcast {
+        reply: BroadcastFrameReply,
+    },
+    SubscribeLogBroadcast {
+        reply: BroadcastFrameReply,
+    },
 }
 
 impl fmt::Display for PosixSpinelHostMessage {
@@ -66,6 +125,11 @@ impl fmt::Display for PosixSpinelHostMessage {
             PosixSpinelHostMessage::SetProperty { prop, .. } => {
                 write!(f, "SetProperty({prop})")
             }
+            PosixSpinelHostMessage::GetProperty { prop, .. } => {
+                write!(f, "GetProperty({prop})")
+            }
+            PosixSpinelHostMessage::TransmitRaw { .. } => write!(f, "TransmitRaw"),
+            PosixSpinelHostMessage::SubscribeRawRx { .. } => write!(f, "SubscribeRawRx"),
             PosixSpinelHostMessage::SubscribeResetMessage { .. } => {
                 write!(f, "SubscribeResetMessage")
             }
@@ -128,6 +192,18 @@ impl PosixSpinelHostHandle {
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
+        Self::new_from_transport_with_config(transport, iid, ConnectionConfig::default())
+    }
+
+    /// Create a handle from a byte transport with explicit timeouts.
+    pub fn new_from_transport_with_config<T>(
+        transport: T,
+        iid: u8,
+        config: ConnectionConfig,
+    ) -> PosixSpinelHostHandle
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         let (handle_tx, handle_rx) = mpsc::unbounded_channel();
         let stream = HdlcCodec::<NoVendor>::default().framed(transport);
 
@@ -136,12 +212,15 @@ impl PosixSpinelHostHandle {
             stream,
             iid,
             tid: TID_START,
+            tx_radio_tid: None,
+            config,
             lut: HashMap::new(),
             reset_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
             debug_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
             net_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
             net_insecure_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
             log_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
+            raw_rx_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
         };
 
         host_connection.run();
@@ -226,7 +305,7 @@ impl PosixSpinelHostHandle {
     /// Set a property value on the device and await the outcome.
     ///
     /// Resolves with the echoed value when the device accepts the set. A
-    /// device that confirms with a `LastStatus` of `Ok` resolves with an
+    /// device that replies with a `LastStatus` of `Ok` resolves with an
     /// empty value. An error `LastStatus` on the same transaction ID resolves
     /// as [`Error::Status`] with the reported code.
     pub async fn set_property(&self, prop: Property, value: Bytes) -> Result<Bytes, Error> {
@@ -257,12 +336,45 @@ impl PosixSpinelHostHandle {
         }
     }
 
+    /// Get a property value from the device.
+    ///
+    /// Resolves with the reported value. An error `LastStatus` on the same
+    /// transaction ID resolves as [`Error::Status`] with the reported code.
+    pub async fn get_property(&self, prop: Property) -> Result<Bytes, Error> {
+        let (sender, receiver) = oneshot::channel();
+
+        self.transaction
+            .send(PosixSpinelHostMessage::GetProperty {
+                prop: prop.clone(),
+                reply: sender,
+            })
+            .map_err(|_| Error::HostConnectionSend)?;
+
+        let response = receiver.await??.await.map_err(Error::from)??;
+
+        let cmd_id = response.command().id();
+        match response.command {
+            Command::PropertyValueIs(p, v) if p == prop => Ok(v),
+            Command::PropertyValueIs(Property::LastStatus, v) => {
+                let (code, _) = PackedU32::decode_checked(&v)?;
+                Err(Error::Status(code))
+            }
+            _ => Err(Error::UnexpectedResponse(cmd_id)),
+        }
+    }
+
+    /// Get the capability list from the device.
+    pub async fn capabilities(&self) -> Result<Vec<Capability>, Error> {
+        let value = self.get_property(Property::Capabilities).await?;
+        CapabilityIter::new(&value).collect()
+    }
+
     /// Set whether the radio physical layer is enabled.
     ///
     /// Encodes the value as the Spinel `b` datatype, one byte 0x00 or 0x01.
     pub async fn set_physical_enabled(&self, enabled: bool) -> Result<(), Error> {
-        let mut value = bytes::BytesMut::new();
-        crate::SpinelBool::write_to_buffer(enabled, &mut value);
+        let mut value = BytesMut::new();
+        SpinelBool::write_to_buffer(enabled, &mut value);
         self.set_property(Property::PhysicalEnabled, value.freeze())
             .await
             .map(|_| ())
@@ -272,8 +384,8 @@ impl PosixSpinelHostHandle {
     ///
     /// Encodes the value as the Spinel `C` datatype, one byte.
     pub async fn set_physical_channel(&self, channel: u8) -> Result<(), Error> {
-        let mut value = bytes::BytesMut::new();
-        crate::SpinelU8::write_to_buffer(channel, &mut value);
+        let mut value = BytesMut::new();
+        SpinelU8::write_to_buffer(channel, &mut value);
         self.set_property(Property::PhysicalChannel, value.freeze())
             .await
             .map(|_| ())
@@ -283,8 +395,8 @@ impl PosixSpinelHostHandle {
     ///
     /// Encodes the value as the Spinel `b` datatype, one byte 0x00 or 0x01.
     pub async fn set_mac_raw_stream_enabled(&self, enabled: bool) -> Result<(), Error> {
-        let mut value = bytes::BytesMut::new();
-        crate::SpinelBool::write_to_buffer(enabled, &mut value);
+        let mut value = BytesMut::new();
+        SpinelBool::write_to_buffer(enabled, &mut value);
         self.set_property(Property::MacRawStreamEnabled, value.freeze())
             .await
             .map(|_| ())
@@ -294,15 +406,104 @@ impl PosixSpinelHostHandle {
     ///
     /// Encodes the mode as the Spinel `C` datatype, one byte with the mode's
     /// numeric value.
-    pub async fn set_mac_promiscuous_mode(
-        &self,
-        mode: crate::PromiscuousMode,
-    ) -> Result<(), Error> {
-        let mut value = bytes::BytesMut::new();
-        crate::SpinelU8::write_to_buffer(u8::from(mode), &mut value);
+    pub async fn set_mac_promiscuous_mode(&self, mode: PromiscuousMode) -> Result<(), Error> {
+        let mut value = BytesMut::new();
+        SpinelU8::write_to_buffer(u8::from(mode), &mut value);
         self.set_property(Property::MacPromiscuousMode, value.freeze())
             .await
             .map(|_| ())
+    }
+
+    /// Transmit a raw 802.15.4 frame and await the transmit-done report.
+    ///
+    /// The PSDU in `frame` excludes the 2-byte FCS. The radio computes the
+    /// FCS. One raw transmit is allowed in flight at a time, so a second
+    /// transmit fails with [`Error::RequestBusy`] while one is pending.
+    pub async fn transmit_raw(&self, frame: RawTxFrame) -> Result<RawTxDone, Error> {
+        let mut payload = BytesMut::new();
+        frame.encode(&mut payload)?;
+
+        let (sender, receiver) = oneshot::channel();
+        self.transaction
+            .send(PosixSpinelHostMessage::TransmitRaw {
+                payload: payload.freeze(),
+                reply: sender,
+            })
+            .map_err(|_| Error::HostConnectionSend)?;
+
+        let response = receiver.await??.await.map_err(Error::from)??;
+
+        let cmd_id = response.command().id();
+        match response.command {
+            Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), v) => {
+                RawTxDone::decode(&v)
+            }
+            Command::PropertyValueIs(Property::LastStatus, v) => {
+                let (code, _) = PackedU32::decode_checked(&v)?;
+                Err(Error::Status(code))
+            }
+            _ => Err(Error::UnexpectedResponse(cmd_id)),
+        }
+    }
+
+    /// Subscribe to received raw 802.15.4 frames.
+    ///
+    /// The channel carries decoded [`RawRxFrame`] values. Frames flow after
+    /// raw mode is enabled with [`Self::enable_raw`].
+    pub async fn subscribe_raw_rx(&self) -> Result<Receiver<RawRxFrame>, Error> {
+        let (sender, receiver) = oneshot::channel();
+        self.transaction
+            .send(PosixSpinelHostMessage::SubscribeRawRx { reply: sender })
+            .map_err(|_| Error::HostConnectionSend)?;
+        receiver.await?
+    }
+
+    /// Enable raw link mode on the device.
+    ///
+    /// Runs the mode-enable sequence in order. The sequence verifies the
+    /// `MacRaw` capability, enables the radio physical layer, selects the
+    /// channel, enables raw frame delivery, and optionally sets promiscuous
+    /// mode. A device that reports `InvalidState` has its network stack up,
+    /// which resolves as [`Error::DeviceStackUp`]. This method never alters
+    /// the device network state itself.
+    pub async fn enable_raw(
+        &self,
+        channel: u8,
+        promiscuous: Option<PromiscuousMode>,
+    ) -> Result<(), Error> {
+        let caps = self.capabilities().await?;
+        if !caps.contains(&Capability::MacRaw) {
+            return Err(Error::CapabilityMissing(
+                Capability::<NoVendor>::MacRaw.id(),
+            ));
+        }
+
+        self.set_physical_enabled(true)
+            .await
+            .map_err(Self::map_stack_up)?;
+        self.set_physical_channel(channel)
+            .await
+            .map_err(Self::map_stack_up)?;
+        self.set_mac_raw_stream_enabled(true)
+            .await
+            .map_err(Self::map_stack_up)?;
+
+        if let Some(mode) = promiscuous {
+            self.set_mac_promiscuous_mode(mode)
+                .await
+                .map_err(Self::map_stack_up)?;
+        }
+
+        Ok(())
+    }
+
+    /// Map an `InvalidState` status to the stack-up error.
+    fn map_stack_up(e: Error) -> Error {
+        if e == Error::Status(u32::from(Status::<NoVendor>::InvalidState)) {
+            Error::DeviceStackUp
+        } else {
+            e
+        }
     }
 
     /// Internal method to send a request to the host connection actor.
@@ -393,6 +594,15 @@ struct PosixSpinelHost<T> {
     /// Cursor for the next transaction ID to try
     tid: u8,
 
+    /// TID of the raw transmit in flight, when there is one.
+    ///
+    /// One raw transmit is allowed in flight at a time, so a second transmit
+    /// fails with [`Error::RequestBusy`] while this is set.
+    tx_radio_tid: Option<u8>,
+
+    /// Request timeouts
+    config: ConnectionConfig,
+
     /// Lookup table for transaction ID to pending request
     lut: HashMap<u8, PendingRequest>,
 
@@ -401,17 +611,13 @@ struct PosixSpinelHost<T> {
     net_broadcast: broadcast::Sender<Frame>,
     net_insecure_broadcast: broadcast::Sender<Frame>,
     log_broadcast: broadcast::Sender<Frame>,
+    raw_rx_broadcast: broadcast::Sender<RawRxFrame>,
 }
 
 impl<T> PosixSpinelHost<T>
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    /// Timeout for property requests.
-    ///
-    /// Matches the host driver wait time for property responses.
-    const PROPERTY_TIMEOUT: Duration = Duration::from_secs(2);
-
     /// Period between sweeps for expired requests.
     const EXPIRY_SWEEP_PERIOD: Duration = Duration::from_millis(250);
 
@@ -458,6 +664,10 @@ where
         if tid == 0 {
             self.process_unsolicited_frame(frame);
         } else {
+            if self.tx_radio_tid == Some(tid) {
+                self.tx_radio_tid = None;
+            }
+
             match self.lut.remove(&tid) {
                 Some(pending) => {
                     let _ = pending.sender.send(Ok(frame));
@@ -484,10 +694,7 @@ where
                         Err(_) => {
                             // A status outside the reset-reason range is not a
                             // reset. Pending requests stay intact.
-                            log::info!(
-                                "Unsolicited status: {}",
-                                Status::<NoVendor>::from(status)
-                            );
+                            log::info!("Unsolicited status: {}", Status::<NoVendor>::from(status));
                         }
                     },
                     Err(_) => {
@@ -500,6 +707,16 @@ where
             }
             Command::PropertyValueIs(Property::Stream(PropertyStream::Net), _) => {
                 let _ = self.net_broadcast.send(frame);
+            }
+            Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), bytes) => {
+                match RawRxFrame::decode(&bytes) {
+                    Ok(raw_frame) => {
+                        let _ = self.raw_rx_broadcast.send(raw_frame);
+                    }
+                    Err(e) => {
+                        log::warn!("Undecodable raw frame skipped: {e:?}");
+                    }
+                }
             }
             Command::PropertyValueIs(Property::Stream(PropertyStream::NetInsecure), _) => {
                 let _ = self.net_insecure_broadcast.send(frame);
@@ -534,6 +751,25 @@ where
                 self.send_request(Command::PropertyValueSet(prop, value), reply)
                     .await;
             }
+            PosixSpinelHostMessage::GetProperty { prop, reply } => {
+                self.send_request(Command::PropertyValueGet(prop), reply)
+                    .await;
+            }
+            PosixSpinelHostMessage::TransmitRaw { payload, reply } => {
+                if self.tx_radio_tid.is_some() {
+                    let _ = reply.send(Err(Error::RequestBusy));
+                } else {
+                    let cmd =
+                        Command::PropertyValueSet(Property::Stream(PropertyStream::Raw), payload);
+                    self.tx_radio_tid = self
+                        .send_request_with_timeout(cmd, reply, self.config.tx_timeout)
+                        .await;
+                }
+            }
+            PosixSpinelHostMessage::SubscribeRawRx { reply } => {
+                let rx = self.raw_rx_broadcast.subscribe();
+                let _ = reply.send(Ok(rx));
+            }
             PosixSpinelHostMessage::SubscribeResetMessage { reply } => {
                 let rx = self.reset_broadcast.subscribe();
                 let _send_frame_res = reply.send(Ok(rx));
@@ -557,14 +793,27 @@ where
         };
     }
 
-    /// Form and send a request to the target device.
+    /// Form and send a request to the target device with the property timeout.
     async fn send_request(&mut self, cmd: Command, reply: OneshotFrameReply) {
+        let timeout = self.config.property_timeout;
+        self.send_request_with_timeout(cmd, reply, timeout).await;
+    }
+
+    /// Form and send a request to the target device.
+    ///
+    /// Returns the assigned TID when the request is in flight.
+    async fn send_request_with_timeout(
+        &mut self,
+        cmd: Command,
+        reply: OneshotFrameReply,
+        timeout: Duration,
+    ) -> Option<u8> {
         log::trace!("Sending request: {cmd:?}");
 
         let Some(tid) = self.next_free_tid() else {
             log::warn!("No free TID for request: {cmd:?}");
             let _ = reply.send(Err(Error::RequestBusy));
-            return;
+            return None;
         };
 
         let frame = Frame::new(Header::new(self.iid, tid), cmd);
@@ -577,14 +826,16 @@ where
                     tid,
                     PendingRequest {
                         sender: send,
-                        deadline: Instant::now() + Self::PROPERTY_TIMEOUT,
+                        deadline: Instant::now() + timeout,
                     },
                 );
                 self.tid = Self::next_tid(tid);
+                Some(tid)
             }
             Err(e) => {
                 log::error!("Request error: {e:?}");
                 let _ = reply.send(Err(e));
+                None
             }
         }
     }
@@ -639,6 +890,9 @@ where
         for tid in expired {
             if let Some(pending) = self.lut.remove(&tid) {
                 log::warn!("Request timed out for TID: {tid}");
+                if self.tx_radio_tid == Some(tid) {
+                    self.tx_radio_tid = None;
+                }
                 let _ = pending.sender.send(Err(Error::RequestTimeout));
             }
         }
@@ -647,6 +901,7 @@ where
     /// Reset the TID cursor and clear out the lookup table.
     fn reset_tid(&mut self) {
         self.tid = TID_START;
+        self.tx_radio_tid = None;
         self.lut.clear();
     }
 }
@@ -767,6 +1022,161 @@ mod tests {
             .unwrap();
 
         assert_eq!(set.await.unwrap(), Err(Error::Status(4)));
+    }
+
+    fn raw_tx_frame() -> RawTxFrame {
+        RawTxFrame {
+            psdu: Bytes::from_static(&[0xAA, 0xBB]),
+            channel: 11,
+            config: Default::default(),
+        }
+    }
+
+    /// The packed capability list containing MacRaw (513).
+    const CAPS_WITH_MAC_RAW: &[u8] = &[0x81, 0x04];
+
+    #[tokio::test(start_paused = true)]
+    async fn transmit_raw_resolves_with_tx_done() {
+        let (handle, mut device) = setup();
+
+        let tx_handle = handle.clone();
+        let tx = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
+
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+
+        // The request payload matches the pinned codec encoding.
+        let mut expected = BytesMut::new();
+        raw_tx_frame().encode(&mut expected).unwrap();
+        assert_eq!(
+            request.command(),
+            Command::PropertyValueSet(Property::Stream(PropertyStream::Raw), expected.freeze())
+        );
+
+        // Reply with a transmit-done report of Ok and no ack.
+        let mut done = BytesMut::new();
+        PackedU32::write_to_buffer(0, &mut done);
+        SpinelBool::write_to_buffer(false, &mut done);
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), done.freeze()),
+            ))
+            .await
+            .unwrap();
+
+        let done = tx.await.unwrap().unwrap();
+        assert_eq!(done.status, Status::Ok);
+        assert!(!done.frame_pending);
+        assert_eq!(done.ack, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn second_transmit_raw_is_busy() {
+        let (handle, _device) = setup();
+
+        let tx_handle = handle.clone();
+        let _pending = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
+        tokio::time::sleep(Duration::from_millis(1)).await;
+
+        assert_eq!(
+            handle.transmit_raw(raw_tx_frame()).await,
+            Err(Error::RequestBusy)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn raw_rx_frames_decode_and_skip_bad_payloads() {
+        let (handle, mut device) = setup();
+        let mut rx = handle.subscribe_raw_rx().await.unwrap();
+
+        // An undecodable payload: the prefix claims 4 bytes, 1 follows.
+        device
+            .send(Frame::new(
+                Header::new(0, 0),
+                Command::PropertyValueIs(
+                    Property::Stream(PropertyStream::Raw),
+                    Bytes::from_static(&[0x04, 0x00, 0xAA]),
+                ),
+            ))
+            .await
+            .unwrap();
+
+        // A valid raw frame follows and still arrives decoded.
+        device
+            .send(Frame::new(
+                Header::new(0, 0),
+                Command::PropertyValueIs(
+                    Property::Stream(PropertyStream::Raw),
+                    Bytes::from_static(&[0x02, 0x00, 0xCC, 0xDD]),
+                ),
+            ))
+            .await
+            .unwrap();
+
+        let frame = rx.recv().await.unwrap();
+        assert_eq!(&frame.psdu[..], &[0xCC, 0xDD]);
+        assert_eq!(frame.rssi, -128);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn enable_raw_fails_without_capability() {
+        let (handle, mut device) = setup();
+
+        let enable_handle = handle.clone();
+        let enable = tokio::spawn(async move { enable_handle.enable_raw(11, None).await });
+
+        let request = device.next().await.unwrap().unwrap();
+        assert_eq!(
+            request.command(),
+            Command::PropertyValueGet(Property::Capabilities)
+        );
+        device
+            .send(Frame::new(
+                Header::new(0, request.header().tid()),
+                Command::PropertyValueIs(Property::Capabilities, Bytes::new()),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(enable.await.unwrap(), Err(Error::CapabilityMissing(513)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn enable_raw_reports_stack_up() {
+        let (handle, mut device) = setup();
+
+        let enable_handle = handle.clone();
+        let enable = tokio::spawn(async move { enable_handle.enable_raw(11, None).await });
+
+        let caps_req = device.next().await.unwrap().unwrap();
+        device
+            .send(Frame::new(
+                Header::new(0, caps_req.header().tid()),
+                Command::PropertyValueIs(
+                    Property::Capabilities,
+                    Bytes::from_static(CAPS_WITH_MAC_RAW),
+                ),
+            ))
+            .await
+            .unwrap();
+
+        // The stack is up, so enabling the physical layer is rejected.
+        let set_req = device.next().await.unwrap().unwrap();
+        assert_eq!(
+            set_req.command(),
+            Command::PropertyValueSet(Property::PhysicalEnabled, Bytes::from_static(&[0x01]))
+        );
+        device
+            .send(Frame::new(
+                Header::new(0, set_req.header().tid()),
+                Command::last_status(Status::InvalidState),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(enable.await.unwrap(), Err(Error::DeviceStackUp));
     }
 
     #[tokio::test(start_paused = true)]

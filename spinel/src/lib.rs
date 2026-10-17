@@ -12,7 +12,7 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
         mod connection;
         pub use codec::HdlcCodec;
-        pub use connection::{SpinelHostConnection, PosixSpinelHostHandle};
+        pub use connection::{ConnectionConfig, SpinelHostConnection, PosixSpinelHostHandle};
     }
 }
 
