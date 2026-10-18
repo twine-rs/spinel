@@ -7,3 +7,5 @@ Cargo.lock
 debug-serial
 **/.DS_Store
 **/mutants.*
+.claude/*
+.obsidian/*
