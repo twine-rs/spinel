@@ -100,6 +100,13 @@ impl<V: Vendor> Iterator for CapabilityIter<'_, V> {
             }
         };
 
+        // A decode that consumes nothing cannot advance the cursor. Stop
+        // instead of iterating in place forever.
+        if consumed == 0 {
+            self.bytes = &[];
+            return Some(Err(Error::CapsMalformed));
+        }
+
         self.bytes = &self.bytes[consumed..];
         Some(Ok(Capability::from(id)))
     }
