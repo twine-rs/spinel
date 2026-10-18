@@ -166,6 +166,14 @@ pub struct PosixSpinelHostHandle {
 impl PosixSpinelHostHandle {
     const DEFAULT_BROADCAST_CAPACITY: usize = 16;
 
+    /// Capacity of the raw receive broadcast channel.
+    ///
+    /// Promiscuous capture delivers frames in bursts far above the rate of
+    /// the other broadcasts, so the raw stream gets a deeper ring. A
+    /// receiver that falls further behind than this loses the oldest frames
+    /// with a lag error.
+    const RAW_RX_BROADCAST_CAPACITY: usize = 512;
+
     /// Create a new [`PosixSpinelHostHandle`] from a Spinel URL
     pub fn new_from_url(_url: &str) -> Result<PosixSpinelHostHandle, Error> {
         // todo: parse URL and open with `new_from_serial`
@@ -220,7 +228,7 @@ impl PosixSpinelHostHandle {
             net_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
             net_insecure_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
             log_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
-            raw_rx_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
+            raw_rx_broadcast: broadcast::channel(Self::RAW_RX_BROADCAST_CAPACITY).0,
         };
 
         host_connection.run();
@@ -419,6 +427,11 @@ impl PosixSpinelHostHandle {
     /// The PSDU in `frame` excludes the 2-byte FCS. The radio computes the
     /// FCS. One raw transmit is allowed in flight at a time, so a second
     /// transmit fails with [`Error::RequestBusy`] while one is pending.
+    ///
+    /// Resolves with the report only for the radio transmit outcomes `Ok`,
+    /// `NoAck`, and `CcaFailure`. Any other status means the device rejected
+    /// the request itself, for example `InvalidState` while raw mode is off,
+    /// and resolves as [`Error::Status`] with the reported code.
     pub async fn transmit_raw(&self, frame: RawTxFrame) -> Result<RawTxDone, Error> {
         let mut payload = BytesMut::new();
         frame.encode(&mut payload)?;
@@ -437,12 +450,20 @@ impl PosixSpinelHostHandle {
         // A STREAM_RAW value is accepted too, because the Spinel header
         // documents the response under that property.
         let cmd_id = response.command().id();
-        match response.command {
+        let done = match response.command {
             Command::PropertyValueIs(Property::LastStatus, v)
             | Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), v) => {
-                RawTxDone::decode(&v)
+                RawTxDone::decode(&v)?
             }
-            _ => Err(Error::UnexpectedResponse(cmd_id)),
+            _ => return Err(Error::UnexpectedResponse(cmd_id)),
+        };
+
+        // A status outside the radio transmit outcomes means the device
+        // rejected the request, which resolves as an error like every other
+        // rejected request.
+        match done.status {
+            Status::Ok | Status::NoAck | Status::CcaFailure => Ok(done),
+            status => Err(Error::Status(u32::from(status))),
         }
     }
 
@@ -1130,6 +1151,29 @@ mod tests {
 
     /// The packed capability list containing MacRaw (513).
     const CAPS_WITH_MAC_RAW: &[u8] = &[0x81, 0x04];
+
+    #[tokio::test(start_paused = true)]
+    async fn transmit_raw_rejection_resolves_status_error() {
+        let (handle, mut device) = setup();
+
+        let tx_handle = handle.clone();
+        let tx = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
+
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+
+        // A device with raw mode off rejects the set with InvalidState,
+        // which resolves as an error instead of a transmit report.
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::last_status(Status::InvalidState),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(tx.await.unwrap(), Err(Error::Status(4)));
+    }
 
     #[tokio::test(start_paused = true)]
     async fn transmit_raw_resolves_with_tx_done() {
