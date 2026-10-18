@@ -132,37 +132,33 @@ impl<V: Vendor> Command<V> {
     pub fn encode(self, buffer: &mut BytesMut) -> Result<(), Error> {
         let id = self.id();
 
-        let _num = match self {
-            Command::Noop | Command::Reset => PackedU32::write_to_buffer(id, buffer),
+        match self {
+            Command::Noop | Command::Reset => {
+                PackedU32::write_to_buffer(id, buffer);
+            }
             Command::PropertyValueGet(prop) => {
-                Self::write_to_buffer_with_property(id, prop, buffer)
+                Self::write_to_buffer_with_property(id, prop, buffer);
             }
             Command::PropertyValueSet(prop, value) | Command::PropertyValueIs(prop, value) => {
-                let num = Self::write_to_buffer_with_property(id, prop, buffer);
+                Self::write_to_buffer_with_property(id, prop, buffer);
                 buffer.put_slice(value.as_ref());
-
-                num + value.len()
             }
             Command::Vendor(_vc, payload) => {
-                let num = PackedU32::write_to_buffer(id, buffer);
+                PackedU32::write_to_buffer(id, buffer);
                 buffer.put_slice(payload.as_ref());
-
-                num + payload.len()
             }
-        };
+        }
 
         Ok(())
     }
 
     /// Encode both the command and property IDs and write them to the buffer.
-    fn write_to_buffer_with_property(cmd: u32, prop: Property<V>, buffer: &mut BytesMut) -> usize {
+    fn write_to_buffer_with_property(cmd: u32, prop: Property<V>, buffer: &mut BytesMut) {
         let (cmd_array, cmd_count) = PackedU32::encode(cmd);
         let (prop_array, prop_count) = PackedU32::encode(prop.id());
 
         buffer.put_slice(&cmd_array[..cmd_count]);
         buffer.put_slice(&prop_array[..prop_count]);
-
-        cmd_count + prop_count
     }
 
     /// Decode the command from the buffer.
@@ -183,17 +179,17 @@ impl<V: Vendor> Command<V> {
             }
             CMD_PROP_VALUE_SET => {
                 let prop = Property::try_from(payload)?;
-                let value = Bytes::copy_from_slice(&payload[prop.packed_len()..]);
+                let value = buffer.slice(cmd_id_len + prop.packed_len()..);
                 Ok(Command::PropertyValueSet(prop, value))
             }
             CMD_PROP_VALUE_IS => {
                 let prop = Property::try_from(payload)?;
-                let value = Bytes::copy_from_slice(&payload[prop.packed_len()..]);
+                let value = buffer.slice(cmd_id_len + prop.packed_len()..);
                 Ok(Command::PropertyValueIs(prop, value))
             }
             // Any unassigned command ID falls through to the vendor profile.
             other => match V::Command::try_from_id(other) {
-                Ok(vc) => Ok(Command::Vendor(vc, Bytes::copy_from_slice(payload))),
+                Ok(vc) => Ok(Command::Vendor(vc, buffer.slice(cmd_id_len..))),
                 Err(_) => Err(Error::Command(other)),
             },
         }
@@ -307,6 +303,27 @@ mod tests {
         );
         let bytes: Bytes = cmd.clone().try_into().unwrap();
         assert_eq!(&bytes[..], &[0x03, 0x08, 0xDE, 0xAD]);
+        assert_eq!(cmd.payload_len(), 3);
         assert_eq!(Command::decode(&bytes).unwrap(), cmd);
+    }
+
+    #[test]
+    fn vendor_command_packed_len_matches_its_id() {
+        use crate::codec::vendor::test_vendor::{TestValue, TestVendor};
+
+        let cmd = Command::<TestVendor>::Vendor(TestValue(513), Bytes::from_static(&[0xAA]));
+        assert_eq!(cmd.packed_len(), 2);
+        assert_eq!(cmd.payload_len(), 1);
+    }
+
+    #[test]
+    fn vendor_command_round_trips_on_the_wire() {
+        use crate::codec::vendor::test_vendor::{TestValue, TestVendor};
+
+        let cmd = Command::<TestVendor>::Vendor(TestValue(513), Bytes::from_static(&[0xAA, 0xBB]));
+        let mut buffer = BytesMut::new();
+        cmd.clone().encode(&mut buffer).unwrap();
+
+        assert_eq!(Command::<TestVendor>::decode(&buffer.freeze()), Ok(cmd));
     }
 }

@@ -400,7 +400,9 @@ mod tests {
         );
 
         let mut buffer = BytesMut::new();
-        HdlcLiteFrame::new(frame.clone()).encode(&mut buffer).unwrap();
+        HdlcLiteFrame::new(frame.clone())
+            .encode(&mut buffer)
+            .unwrap();
 
         // Between the delimiters, an escape-set byte only appears as the
         // escape marker itself, and the byte after a marker is XOR-corrected
@@ -422,8 +424,36 @@ mod tests {
     }
 
     #[test]
+    fn escaped_checksum_round_trips() {
+        // This value produces a checksum that contains an escape-set byte.
+        let value = Bytes::from_static(&[0x02, 0x00, 0xCC, 0xDD]);
+        let frame = Frame::<NoVendor>::new(
+            Header::new(0x00, 0x00),
+            Command::PropertyValueIs(Property::Stream(crate::PropertyStream::Raw), value),
+        );
+
+        let mut buffer = BytesMut::new();
+        HdlcLiteFrame::new(frame.clone())
+            .encode(&mut buffer)
+            .unwrap();
+        let decoded = HdlcLiteFrame::<NoVendor>::decode(&buffer.freeze()).unwrap();
+        assert_eq!(decoded.into_inner(), frame);
+    }
+
+    #[test]
     fn decode_rejects_empty_packet() {
         let bytes = Bytes::from_static(&[0x7E, 0x7E]);
+        assert_eq!(
+            HdlcLiteFrame::<NoVendor>::decode(&bytes),
+            Err(Error::PacketLength(0))
+        );
+    }
+
+    #[test]
+    fn decode_rejects_checksum_only_packet() {
+        // Two bytes pass the length guard. The checksum of an empty packet
+        // is 0x0000, so decoding proceeds to the empty frame and fails there.
+        let bytes = Bytes::from_static(&[0x7E, 0x00, 0x00, 0x7E]);
         assert_eq!(
             HdlcLiteFrame::<NoVendor>::decode(&bytes),
             Err(Error::PacketLength(0))

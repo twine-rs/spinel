@@ -5,7 +5,7 @@ use crate::Error;
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
         mod posix;
-        pub use posix::PosixSpinelHostHandle;
+        pub use posix::{ConnectionConfig, PosixSpinelHostHandle};
     }
 }
 

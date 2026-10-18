@@ -1,0 +1,10 @@
+# Mutants that no test can kill.
+exclude_re = [
+    # Display and defmt renderings are cosmetic.
+    "impl fmt::Display",
+    "impl defmt::Format",
+    # Never is uninhabited, so its methods cannot execute.
+    "<impl VendorValue for Never>",
+    # The header bit fields are disjoint, so OR and XOR agree.
+    "replace \\| with \\^ in <impl From<Header> for u8>::from",
+]

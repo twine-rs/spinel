@@ -290,4 +290,37 @@ mod tests {
         assert_eq!(Status::<NoVendor>::from(9999), Status::Unknown(9999));
         assert_eq!(u32::from(Status::<NoVendor>::Unknown(9999)), 9999);
     }
+
+    #[test]
+    fn vendor_status_round_trips() {
+        use crate::codec::vendor::test_vendor::{TestValue, TestVendor};
+
+        // An unassigned code decodes through the vendor profile and encodes
+        // back to the same wire value.
+        let status = Status::<TestVendor>::from(400);
+        assert_eq!(status, Status::Vendor(TestValue(400)));
+        assert_eq!(u32::from(status), 400);
+    }
+
+    #[test]
+    fn reset_reason_codes_decode() {
+        let cases = [
+            (112, ResetReason::PowerOn),
+            (113, ResetReason::External),
+            (114, ResetReason::Software),
+            (115, ResetReason::Fault),
+            (116, ResetReason::Crash),
+            (117, ResetReason::Assert),
+            (118, ResetReason::Other),
+            (119, ResetReason::Unknown),
+            (120, ResetReason::Watchdog),
+        ];
+
+        for (code, reason) in cases {
+            assert_eq!(ResetReason::try_from(code), Ok(reason));
+        }
+
+        assert_eq!(ResetReason::try_from(111), Err(()));
+        assert_eq!(ResetReason::try_from(121), Err(()));
+    }
 }

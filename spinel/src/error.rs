@@ -23,6 +23,12 @@ cfg_if::cfg_if! {
 pub enum Error {
     #[error("Unable to parse UTF8 characters")]
     DatatypeParseU8(#[from] core::str::Utf8Error),
+    #[error("Invalid boolean byte: {0}")]
+    DatatypeBool(u8),
+    #[error("Datatype truncated: needed {needed} bytes, got {got}")]
+    DatatypeTruncated { needed: usize, got: usize },
+    #[error("PSDU length invalid: {0}")]
+    PsduLength(usize),
     #[error("Invalid header: {0}")]
     Header(u8),
     #[error("Incorrect HDLC checksum: {0}")]
@@ -47,8 +53,12 @@ pub enum Error {
     CapsMalformed,
     #[error("Incorrect packet length: {0}")]
     PacketLength(usize),
+    #[error("Device lacks required capability: {0}")]
+    CapabilityMissing(u32),
     #[error("Device reset while the request was pending")]
     DeviceReset,
+    #[error("Device stack is up, bring the device network interface down first")]
+    DeviceStackUp,
     #[error("No free transaction ID, all requests are pending")]
     RequestBusy,
     #[error("No response received within the request timeout")]
@@ -59,4 +69,23 @@ pub enum Error {
     Status(u32),
     #[error("Target sent an unexpected response for command: {0}")]
     UnexpectedResponse(u32),
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn io_error_converts_to_the_io_variant() {
+        let error = Error::from(std::io::Error::other("boom"));
+        assert_eq!(error, Error::Io("boom".into()));
+    }
+
+    #[tokio::test]
+    async fn recv_error_converts_to_host_connection_recv() {
+        let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+        drop(sender);
+        let error = receiver.await.unwrap_err();
+        assert!(matches!(Error::from(error), Error::HostConnectionRecv(_)));
+    }
 }

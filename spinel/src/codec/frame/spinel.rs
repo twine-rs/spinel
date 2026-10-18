@@ -147,6 +147,18 @@ mod tests {
     }
 
     #[test]
+    fn last_status_is_none_for_other_commands() {
+        let frame: Frame = Frame::new(
+            Header::new(0, 1),
+            Command::PropertyValueIs(Property::NcpVersion, Bytes::from_static(b"X")),
+        );
+        assert_eq!(frame.last_status(), None);
+
+        let frame: Frame = Frame::new(Header::new(0, 1), Command::Noop);
+        assert_eq!(frame.last_status(), None);
+    }
+
+    #[test]
     fn header_try_from_u8() {
         let header_byte = HEADER_IID_01_IID_02_BYTE;
         let header = Header::try_from(header_byte).unwrap();
