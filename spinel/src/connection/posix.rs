@@ -329,6 +329,17 @@ where
     /// Period between sweeps for expired requests.
     const EXPIRY_SWEEP_PERIOD: Duration = Duration::from_millis(250);
 
+    /// The IID that carries unsolicited notifications for every instance.
+    const BROADCAST_IID: u8 = 0;
+
+    /// Bound for one transport write.
+    ///
+    /// The device reads, the expiry sweep, and the writes share the actor
+    /// task, so a blocked link must not stall the loop. A timed-out write
+    /// resolves the request with [`Error::RequestTimeout`] and leaves the
+    /// frame in the sink buffer, where the next write resumes flushing it.
+    const SEND_TIMEOUT: Duration = Duration::from_secs(1);
+
     fn run(mut self) {
         tokio::spawn(async move {
             let mut expiry = tokio::time::interval(Self::EXPIRY_SWEEP_PERIOD);
@@ -336,9 +347,20 @@ where
 
             loop {
                 select! {
-                    Some(msg) = self.msg.recv() => {
-                        log::trace!("Received host request: {msg}");
-                        self.process_handle_msg(msg).await;
+                    msg = self.msg.recv() => {
+                        match msg {
+                            Some(msg) => {
+                                log::trace!("Received host request: {msg}");
+                                self.process_handle_msg(msg).await;
+                            }
+                            None => {
+                                // Every handle has dropped, so no request
+                                // can arrive. End the task to release the
+                                // transport.
+                                log::trace!("All handles dropped, actor stopping");
+                                break;
+                            }
+                        }
                     }
 
                     Some(stream_msg) = self.stream.next() => {
@@ -362,9 +384,14 @@ where
     }
 
     /// Route a received frame to a pending request or a broadcast channel.
+    ///
+    /// Frames for the configured IID and the broadcast IID pass. OpenThread
+    /// devices emit unsolicited notifications, including resets, on the
+    /// broadcast IID.
     fn process_frame(&mut self, frame: Frame) {
-        if frame.header().iid() != self.iid {
-            log::trace!("Ignoring frame for IID: {}", frame.header().iid());
+        let frame_iid = frame.header().iid();
+        if frame_iid != self.iid && frame_iid != Self::BROADCAST_IID {
+            log::trace!("Ignoring frame for IID: {frame_iid}");
             return;
         }
 
@@ -499,13 +526,16 @@ where
         }
     }
 
-    /// Send a [`Frame`] to the target device.
+    /// Send a [`Frame`] to the target device within [`Self::SEND_TIMEOUT`].
     async fn send_frame(&mut self, frame: Frame) -> Result<(), Error> {
         log::trace!("Sending frame: {frame:?}");
-        self.stream
-            .send(frame)
-            .await
-            .map_err(|e| Error::Io(e.to_string()))
+        match tokio::time::timeout(Self::SEND_TIMEOUT, self.stream.send(frame)).await {
+            Ok(result) => result.map_err(|e| Error::Io(e.to_string())),
+            Err(_) => {
+                log::error!("Transport send timed out");
+                Err(Error::RequestTimeout)
+            }
+        }
     }
 
     /// Find the next TID with no pending request, starting at the cursor.
@@ -573,8 +603,12 @@ mod tests {
     use super::*;
 
     fn setup() -> (PosixSpinelHostHandle, Framed<DuplexStream, HdlcCodec>) {
+        setup_with_iid(0)
+    }
+
+    fn setup_with_iid(iid: u8) -> (PosixSpinelHostHandle, Framed<DuplexStream, HdlcCodec>) {
         let (host_side, device_side) = duplex(4096);
-        let handle = PosixSpinelHostHandle::new_from_transport(host_side, 0);
+        let handle = PosixSpinelHostHandle::new_from_transport(host_side, iid);
         let device = HdlcCodec::<NoVendor>::default().framed(device_side);
         (handle, device)
     }
@@ -604,6 +638,45 @@ mod tests {
             .unwrap();
 
         assert_eq!(pending.await.unwrap(), Err(Error::DeviceReset));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn broadcast_iid_reset_reaches_other_iid() {
+        let (handle, mut device) = setup_with_iid(1);
+
+        let pending_handle = handle.clone();
+        let pending = tokio::spawn(async move { pending_handle.noop().await });
+        let _request = device.next().await.unwrap().unwrap();
+
+        // The device announces the reset on the broadcast IID zero, which
+        // resolves requests pending on every instance.
+        device
+            .send(unsolicited_status(Status::Unknown(114)))
+            .await
+            .unwrap();
+
+        assert_eq!(pending.await.unwrap(), Err(Error::DeviceReset));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn actor_stops_when_handles_drop() {
+        let (handle, mut device) = setup();
+
+        // With every handle gone the actor ends and releases the transport,
+        // which the device observes as the end of the stream.
+        drop(handle);
+        assert!(device.next().await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn blocked_transport_write_times_out() {
+        // A one-byte transport stalls the first frame write. The bounded
+        // write resolves the request instead of stalling the actor.
+        let (host_side, device_side) = duplex(1);
+        let handle = PosixSpinelHostHandle::new_from_transport(host_side, 0);
+        let _device = device_side;
+
+        assert_eq!(handle.noop().await, Err(Error::RequestTimeout));
     }
 
     #[tokio::test(start_paused = true)]
