@@ -116,6 +116,12 @@ impl<V: Vendor> HdlcLiteFrame<V> {
     /// It is the responsibility of the caller to ensure that the data stream is synchronized and
     /// the frame is complete before calling this function.
     pub fn decode(bytes: &Bytes) -> Result<Self, Error> {
+        // Anything shorter than the two delimiters cannot hold a frame
+        // and would underflow the slicing below.
+        if bytes.len() < 2 {
+            return Err(Error::PacketLength(bytes.len()));
+        }
+
         if let Some(f) = bytes.first() {
             if *f != Self::FRAME_DELIMITER_FLAG {
                 return Err(Error::HdlcStartDelimiter(*f));
@@ -273,6 +279,26 @@ mod tests {
         let missing_end = Bytes::copy_from_slice(&bytes[..5]);
         let test = HdlcLiteFrame::<NoVendor>::decode(&missing_end);
         assert_eq!(test, Err(Error::HdlcEndDelimiter(0xF8)));
+    }
+
+    #[test]
+    fn errors_on_short_input() {
+        // Unsynchronized input shorter than two delimiters errors instead
+        // of panicking on the slicing.
+        assert_eq!(
+            HdlcLiteFrame::<NoVendor>::decode(&Bytes::new()),
+            Err(Error::PacketLength(0))
+        );
+        assert_eq!(
+            HdlcLiteFrame::<NoVendor>::decode(&Bytes::from_static(&[0x7E])),
+            Err(Error::PacketLength(1))
+        );
+
+        // Two bare delimiters hold no packet, which errors on the length.
+        assert_eq!(
+            HdlcLiteFrame::<NoVendor>::decode(&Bytes::from_static(&[0x7E, 0x7E])),
+            Err(Error::PacketLength(0))
+        );
     }
 
     #[test]
