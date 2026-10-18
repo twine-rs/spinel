@@ -292,6 +292,17 @@ mod tests {
     }
 
     #[test]
+    fn vendor_status_round_trips() {
+        use crate::codec::vendor::test_vendor::{TestValue, TestVendor};
+
+        // An unassigned code decodes through the vendor profile and encodes
+        // back to the same wire value.
+        let status = Status::<TestVendor>::from(400);
+        assert_eq!(status, Status::Vendor(TestValue(400)));
+        assert_eq!(u32::from(status), 400);
+    }
+
+    #[test]
     fn reset_reason_codes_decode() {
         let cases = [
             (112, ResetReason::PowerOn),

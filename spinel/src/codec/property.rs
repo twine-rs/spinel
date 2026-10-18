@@ -273,4 +273,14 @@ mod tests {
         let prop = Property::<TestVendor>::Vendor(TestValue(513));
         assert_eq!(prop.packed_len(), 2);
     }
+
+    #[test]
+    fn unassigned_property_id_decodes_through_the_vendor() {
+        use crate::codec::vendor::test_vendor::{TestValue, TestVendor};
+
+        assert_eq!(
+            Property::<TestVendor>::try_from(20_000u32),
+            Ok(Property::Vendor(TestValue(20_000)))
+        );
+    }
 }

@@ -315,4 +315,15 @@ mod tests {
         assert_eq!(cmd.packed_len(), 2);
         assert_eq!(cmd.payload_len(), 1);
     }
+
+    #[test]
+    fn vendor_command_round_trips_on_the_wire() {
+        use crate::codec::vendor::test_vendor::{TestValue, TestVendor};
+
+        let cmd = Command::<TestVendor>::Vendor(TestValue(513), Bytes::from_static(&[0xAA, 0xBB]));
+        let mut buffer = BytesMut::new();
+        cmd.clone().encode(&mut buffer).unwrap();
+
+        assert_eq!(Command::<TestVendor>::decode(&buffer.freeze()), Ok(cmd));
+    }
 }

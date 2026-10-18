@@ -112,6 +112,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vendor_capability_round_trips() {
+        use crate::codec::vendor::test_vendor::{TestValue, TestVendor};
+
+        // An unassigned ID decodes through the vendor profile and encodes
+        // back to the same wire ID.
+        let cap = Capability::<TestVendor>::from(900u32);
+        assert_eq!(cap, Capability::Vendor(TestValue(900)));
+        assert_eq!(cap.id(), 900);
+    }
+
+    #[test]
     fn unknown_caps_round_trip() {
         // 15360 packs to two bytes. With no vendor, it decodes as Unknown.
         let caps = [Capability::<NoVendor>::Unknown(15360)];

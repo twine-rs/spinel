@@ -1381,4 +1381,356 @@ mod tests {
         assert_eq!(frame.last_status(), Some(Status::Unknown(114)));
         assert!(reset_rx.try_recv().is_err());
     }
+
+    /// Reply to the next request with an echo of the set value.
+    async fn echo_next_set(device: &mut Framed<DuplexStream, HdlcCodec>) {
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+        let Command::PropertyValueSet(prop, value) = request.command() else {
+            panic!("expected a property set, got {}", request.command());
+        };
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::PropertyValueIs(prop, value),
+            ))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn get_property_resolves_error_status() {
+        let (handle, mut device) = setup();
+
+        let get_handle = handle.clone();
+        let get = tokio::spawn(async move { get_handle.get_property(Property::PhysicalChannel).await });
+
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+        assert_eq!(
+            request.command(),
+            Command::PropertyValueGet(Property::PhysicalChannel)
+        );
+
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::last_status(Status::Failure),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(get.await.unwrap(), Err(Error::Status(1)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn noop_resolves_error_and_unexpected_responses() {
+        let (handle, mut device) = setup();
+
+        // An error status resolves as the status error.
+        let noop_handle = handle.clone();
+        let noop = tokio::spawn(async move { noop_handle.noop().await });
+        let request = device.next().await.unwrap().unwrap();
+        device
+            .send(Frame::new(
+                Header::new(0, request.header().tid()),
+                Command::last_status(Status::Failure),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(noop.await.unwrap(), Err(Error::Status(1)));
+
+        // A response that is not a status resolves as unexpected.
+        let noop_handle = handle.clone();
+        let noop = tokio::spawn(async move { noop_handle.noop().await });
+        let request = device.next().await.unwrap().unwrap();
+        device
+            .send(Frame::new(
+                Header::new(0, request.header().tid()),
+                Command::PropertyValueIs(Property::NcpVersion, Bytes::from_static(b"X")),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(noop.await.unwrap(), Err(Error::UnexpectedResponse(6)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn controller_version_resolves_the_value() {
+        let (handle, mut device) = setup();
+
+        let version_handle = handle.clone();
+        let version = tokio::spawn(async move { version_handle.controller_version().await });
+
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+        assert_eq!(
+            request.command(),
+            Command::PropertyValueGet(Property::NcpVersion)
+        );
+
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::PropertyValueIs(Property::NcpVersion, Bytes::from_static(b"VER")),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(version.await.unwrap(), Ok(Bytes::from_static(b"VER")));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn controller_version_rejects_unexpected_response() {
+        let (handle, mut device) = setup();
+
+        let version_handle = handle.clone();
+        let version = tokio::spawn(async move { version_handle.controller_version().await });
+
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::PropertyValueIs(Property::PhysicalChannel, Bytes::from_static(&[0x0B])),
+            ))
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            version.await.unwrap(),
+            Err(Error::UnexpectedResponse(_))
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn last_status_resolves() {
+        let (handle, mut device) = setup();
+
+        let status_handle = handle.clone();
+        let status = tokio::spawn(async move { status_handle.last_status().await });
+
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+        assert_eq!(
+            request.command(),
+            Command::PropertyValueGet(Property::LastStatus)
+        );
+
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::last_status(Status::Ok),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(status.await.unwrap(), Ok(()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reset_sends_the_command() {
+        let (handle, mut device) = setup();
+
+        let reset_handle = handle.clone();
+        let reset = tokio::spawn(async move { reset_handle.reset().await });
+
+        let request = device.next().await.unwrap().unwrap();
+        assert_eq!(request.command(), Command::Reset);
+        assert_eq!(reset.await.unwrap(), Ok(()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn enable_raw_runs_the_full_sequence() {
+        let (handle, mut device) = setup();
+
+        let raw_handle = handle.clone();
+        let enable = tokio::spawn(async move {
+            raw_handle.enable_raw(11, Some(PromiscuousMode::Full)).await
+        });
+
+        // The capability check comes first.
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+        assert_eq!(
+            request.command(),
+            Command::PropertyValueGet(Property::Capabilities)
+        );
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::PropertyValueIs(
+                    Property::Capabilities,
+                    Bytes::from_static(CAPS_WITH_MAC_RAW),
+                ),
+            ))
+            .await
+            .unwrap();
+
+        // The four sets follow in order and echo back.
+        for _ in 0..4 {
+            echo_next_set(&mut device).await;
+        }
+
+        assert_eq!(enable.await.unwrap(), Ok(()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transmit_raw_accepts_stream_raw_reply() {
+        let (handle, mut device) = setup();
+
+        let tx_handle = handle.clone();
+        let tx = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
+
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+
+        // The transmit-done payload under the raw stream property decodes
+        // with the same status-first layout.
+        let mut done = BytesMut::new();
+        PackedU32::write_to_buffer(0, &mut done);
+        SpinelBool::write_to_buffer(true, &mut done);
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), done.freeze()),
+            ))
+            .await
+            .unwrap();
+
+        let done = tx.await.unwrap().unwrap();
+        assert_eq!(done.status, Status::Ok);
+        assert!(done.frame_pending);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reset_clears_a_pending_raw_transmit() {
+        let (handle, mut device) = setup();
+
+        let tx_handle = handle.clone();
+        let tx = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
+        let _request = device.next().await.unwrap().unwrap();
+
+        device
+            .send(unsolicited_status(Status::Unknown(114)))
+            .await
+            .unwrap();
+        assert_eq!(tx.await.unwrap(), Err(Error::DeviceReset));
+
+        // The reset released the transmit slot, so the next transmit goes
+        // out instead of failing busy.
+        let tx_handle = handle.clone();
+        let tx = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
+        let request = device.next().await.unwrap().unwrap();
+
+        let mut done = BytesMut::new();
+        PackedU32::write_to_buffer(0, &mut done);
+        device
+            .send(Frame::new(
+                Header::new(0, request.header().tid()),
+                Command::PropertyValueIs(Property::LastStatus, done.freeze()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(tx.await.unwrap().unwrap().status, Status::Ok);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stream_broadcasts_route_to_their_subscribers() {
+        let (handle, mut device) = setup();
+        let mut debug_rx = handle.subscribe_debug_broadcast().await.unwrap();
+        let mut insecure_rx = handle.subscribe_net_insecure_broadcast().await.unwrap();
+        let mut log_rx = handle.subscribe_log_broadcast().await.unwrap();
+
+        let stream_frame = |stream| {
+            Frame::new(
+                Header::new(0, 0),
+                Command::PropertyValueIs(Property::Stream(stream), Bytes::from_static(b"S")),
+            )
+        };
+
+        device
+            .send(stream_frame(PropertyStream::Debug))
+            .await
+            .unwrap();
+        device
+            .send(stream_frame(PropertyStream::NetInsecure))
+            .await
+            .unwrap();
+        device.send(stream_frame(PropertyStream::Log)).await.unwrap();
+
+        assert!(debug_rx.recv().await.is_ok());
+        assert!(insecure_rx.recv().await.is_ok());
+        assert!(log_rx.recv().await.is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn malformed_broadcasts_do_not_stop_the_actor() {
+        let (handle, mut device) = setup();
+
+        // An unsolicited non-stream value, a status with an empty payload,
+        // and a response with no pending request each log and move on.
+        device
+            .send(Frame::new(
+                Header::new(0, 0),
+                Command::PropertyValueIs(Property::NcpVersion, Bytes::from_static(b"X")),
+            ))
+            .await
+            .unwrap();
+        device
+            .send(Frame::new(
+                Header::new(0, 0),
+                Command::PropertyValueIs(Property::LastStatus, Bytes::new()),
+            ))
+            .await
+            .unwrap();
+        device
+            .send(Frame::new(
+                Header::new(0, 5),
+                Command::last_status(Status::Ok),
+            ))
+            .await
+            .unwrap();
+
+        // The actor still serves requests afterward.
+        let noop_handle = handle.clone();
+        let noop = tokio::spawn(async move { noop_handle.noop().await });
+        let request = device.next().await.unwrap().unwrap();
+        device
+            .send(Frame::new(
+                Header::new(0, request.header().tid()),
+                Command::last_status(Status::Ok),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(noop.await.unwrap(), Ok(()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn corrupt_frame_does_not_stop_the_actor() {
+        use tokio::io::AsyncWriteExt;
+
+        let (host_side, mut device_side) = duplex(4096);
+        let handle = PosixSpinelHostHandle::new_from_transport(host_side, 0);
+
+        // A delimited frame with a bad checksum surfaces as a stream error,
+        // which the actor logs without stopping.
+        device_side
+            .write_all(&[0x7E, 0x81, 0x00, 0x00, 0x00, 0x7E])
+            .await
+            .unwrap();
+
+        // The actor still serves requests afterward.
+        let mut device = HdlcCodec::<NoVendor>::default().framed(device_side);
+        let noop_handle = handle.clone();
+        let noop = tokio::spawn(async move { noop_handle.noop().await });
+        let request = device.next().await.unwrap().unwrap();
+        device
+            .send(Frame::new(
+                Header::new(0, request.header().tid()),
+                Command::last_status(Status::Ok),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(noop.await.unwrap(), Ok(()));
+    }
 }

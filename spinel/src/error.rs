@@ -70,3 +70,25 @@ pub enum Error {
     #[error("Target sent an unexpected response for command: {0}")]
     UnexpectedResponse(u32),
 }
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn io_error_converts_to_the_io_variant() {
+        let error = Error::from(std::io::Error::other("boom"));
+        assert_eq!(error, Error::Io("boom".into()));
+    }
+
+    #[tokio::test]
+    async fn recv_error_converts_to_host_connection_recv() {
+        let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+        drop(sender);
+        let error = receiver.await.unwrap_err();
+        assert!(matches!(
+            Error::from(error),
+            Error::HostConnectionRecv(_)
+        ));
+    }
+}
