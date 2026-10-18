@@ -1403,7 +1403,8 @@ mod tests {
         let (handle, mut device) = setup();
 
         let get_handle = handle.clone();
-        let get = tokio::spawn(async move { get_handle.get_property(Property::PhysicalChannel).await });
+        let get =
+            tokio::spawn(async move { get_handle.get_property(Property::PhysicalChannel).await });
 
         let request = device.next().await.unwrap().unwrap();
         let tid = request.header().tid();
@@ -1544,9 +1545,10 @@ mod tests {
         let (handle, mut device) = setup();
 
         let raw_handle = handle.clone();
-        let enable = tokio::spawn(async move {
-            raw_handle.enable_raw(11, Some(PromiscuousMode::Full)).await
-        });
+        let enable =
+            tokio::spawn(
+                async move { raw_handle.enable_raw(11, Some(PromiscuousMode::Full)).await },
+            );
 
         // The capability check comes first.
         let request = device.next().await.unwrap().unwrap();
@@ -1656,7 +1658,10 @@ mod tests {
             .send(stream_frame(PropertyStream::NetInsecure))
             .await
             .unwrap();
-        device.send(stream_frame(PropertyStream::Log)).await.unwrap();
+        device
+            .send(stream_frame(PropertyStream::Log))
+            .await
+            .unwrap();
 
         assert!(debug_rx.recv().await.is_ok());
         assert!(insecure_rx.recv().await.is_ok());
