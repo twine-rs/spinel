@@ -4,7 +4,7 @@ Control networking devices using the Spinel protocol.
 
 # Running
 ```
-cargo run --bin spinel-cli -- -p ${DEVTTY}
+cargo run --bin spinel -- -p ${DEVTTY}
 ```
 
 # Developing
@@ -17,5 +17,5 @@ For MacOS, use the `/dev/cu.usbmodemXXXX` instead of the `/dev/tty.usbmodemXXXX`
 
 ```
 ./scripts/socat.sh -u /dev/cu.usbmodemXXXX
-RUST_LOG=trace cargo run --bin spinel-cli -- -p debug-serial -b 0
+RUST_LOG=trace cargo run --bin spinel -- -p debug-serial -b 0
 ```

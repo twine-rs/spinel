@@ -7,6 +7,12 @@ repository.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# The installed binary is `spinel`, so the package name stays `spinel-cli`
+# while the command matches the protocol it speaks.
+[[bin]]
+name = "spinel"
+path = "src/main.rs"
+
 [dependencies]
 bytes = { version = "1.5.0", features = ["serde"] }
 clap = { version = "4.5.1", features = ["derive"] }
