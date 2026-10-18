@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # The serial dependency links against libudev on Linux.
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- --deny warnings
+
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: crate-ci/typos@v1.51.1
+
+  build:
+    name: Build all variants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+      # The serial dependency links against libudev on Linux.
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - uses: Swatinem/rust-cache@v2
+      # Every feature combination of the library, including the no_std
+      # and defmt builds, then the workspace with the binaries.
+      - run: cargo hack check --feature-powerset --no-dev-deps -p spinel
+      - run: cargo build --workspace --all-targets
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      # The serial dependency links against libudev on Linux.
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      # The serial dependency links against libudev on Linux.
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - uses: Swatinem/rust-cache@v2
+      # Fails when line coverage drops below the floor.
+      - run: >
+          cargo llvm-cov --workspace --lcov --output-path lcov.info
+          --fail-under-lines 85
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
+  mutants:
+    name: Mutants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      # The serial dependency links against libudev on Linux.
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - uses: Swatinem/rust-cache@v2
+      # Mutate only the library. The binary and xtask carry no tests,
+      # so a workspace run would report every mutant in them as missed.
+      - run: cargo mutants -p spinel
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: mutants-out
+          path: mutants.out
