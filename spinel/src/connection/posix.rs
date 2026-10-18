@@ -980,6 +980,30 @@ mod tests {
         (handle, device)
     }
 
+    /// Bound for one test await.
+    ///
+    /// The paused test clock advances immediately when the runtime idles,
+    /// so a hung await fails fast. Without the bound, a mutation that
+    /// silences the actor hangs the test until the mutant timeout.
+    const TEST_WAIT: Duration = Duration::from_secs(30);
+
+    /// Read the next frame from the device side within [`TEST_WAIT`].
+    async fn device_next(device: &mut Framed<DuplexStream, HdlcCodec>) -> Frame {
+        tokio::time::timeout(TEST_WAIT, device.next())
+            .await
+            .expect("no frame from the host within the test bound")
+            .expect("the host closed the stream")
+            .expect("the frame failed to decode")
+    }
+
+    /// Receive one broadcast value within [`TEST_WAIT`].
+    async fn recv_bounded<T: Clone>(rx: &mut Receiver<T>) -> T {
+        tokio::time::timeout(TEST_WAIT, rx.recv())
+            .await
+            .expect("no broadcast within the test bound")
+            .expect("the broadcast channel closed")
+    }
+
     fn unsolicited_status(status: Status) -> Frame {
         let mut value = BytesMut::new();
         PackedU32::write_to_buffer(u32::from(status), &mut value);
@@ -995,7 +1019,7 @@ mod tests {
 
         let pending_handle = handle.clone();
         let pending = tokio::spawn(async move { pending_handle.noop().await });
-        let _request = device.next().await.unwrap().unwrap();
+        let _request = device_next(&mut device).await;
 
         // A reset-range status resolves the pending request with the reset
         // error.
@@ -1013,7 +1037,7 @@ mod tests {
 
         let pending_handle = handle.clone();
         let pending = tokio::spawn(async move { pending_handle.noop().await });
-        let _request = device.next().await.unwrap().unwrap();
+        let _request = device_next(&mut device).await;
 
         // The device announces the reset on the broadcast IID zero, which
         // resolves requests pending on every instance.
@@ -1032,7 +1056,10 @@ mod tests {
         // With every handle gone the actor ends and releases the transport,
         // which the device observes as the end of the stream.
         drop(handle);
-        assert!(device.next().await.is_none());
+        let end = tokio::time::timeout(TEST_WAIT, device.next())
+            .await
+            .expect("the host kept the stream open");
+        assert!(end.is_none());
     }
 
     #[tokio::test(start_paused = true)]
@@ -1086,7 +1113,7 @@ mod tests {
         device.send(net_frame(1)).await.unwrap();
         device.send(net_frame(0)).await.unwrap();
 
-        let frame = rx.recv().await.unwrap();
+        let frame = recv_bounded(&mut rx).await;
         assert_eq!(frame.header().iid(), 0);
         assert!(rx.try_recv().is_err());
     }
@@ -1098,7 +1125,7 @@ mod tests {
         let set_handle = handle.clone();
         let set = tokio::spawn(async move { set_handle.set_physical_channel(11).await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
         assert_eq!(
             request.command(),
@@ -1123,7 +1150,7 @@ mod tests {
         let set_handle = handle.clone();
         let set = tokio::spawn(async move { set_handle.set_physical_enabled(true).await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
         assert_eq!(
             request.command(),
@@ -1159,7 +1186,7 @@ mod tests {
         let tx_handle = handle.clone();
         let tx = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
 
         // A device with raw mode off rejects the set with InvalidState,
@@ -1182,7 +1209,7 @@ mod tests {
         let tx_handle = handle.clone();
         let tx = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
 
         // The request payload matches the pinned codec encoding.
@@ -1257,7 +1284,7 @@ mod tests {
             .await
             .unwrap();
 
-        let frame = rx.recv().await.unwrap();
+        let frame = recv_bounded(&mut rx).await;
         assert_eq!(&frame.psdu[..], &[0xCC, 0xDD]);
         assert_eq!(frame.rssi, -128);
         assert!(rx.try_recv().is_err());
@@ -1270,7 +1297,7 @@ mod tests {
         let enable_handle = handle.clone();
         let enable = tokio::spawn(async move { enable_handle.enable_raw(11, None).await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         assert_eq!(
             request.command(),
             Command::PropertyValueGet(Property::Capabilities)
@@ -1293,7 +1320,7 @@ mod tests {
         let enable_handle = handle.clone();
         let enable = tokio::spawn(async move { enable_handle.enable_raw(11, None).await });
 
-        let caps_req = device.next().await.unwrap().unwrap();
+        let caps_req = device_next(&mut device).await;
         device
             .send(Frame::new(
                 Header::new(0, caps_req.header().tid()),
@@ -1306,7 +1333,7 @@ mod tests {
             .unwrap();
 
         // The stack is up, so enabling the physical layer is rejected.
-        let set_req = device.next().await.unwrap().unwrap();
+        let set_req = device_next(&mut device).await;
         assert_eq!(
             set_req.command(),
             Command::PropertyValueSet(Property::PhysicalEnabled, Bytes::from_static(&[0x01]))
@@ -1329,7 +1356,7 @@ mod tests {
         let set_handle = handle.clone();
         let set = tokio::spawn(async move { set_handle.set_physical_channel(11).await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
 
         device
@@ -1351,7 +1378,7 @@ mod tests {
         // Hold a request open across the unsolicited status.
         let pending_handle = handle.clone();
         let pending = tokio::spawn(async move { pending_handle.noop().await });
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
 
         // A non-reset status must not resolve as a reset notification and
@@ -1377,14 +1404,14 @@ mod tests {
             .await
             .unwrap();
 
-        let frame = reset_rx.recv().await.unwrap();
+        let frame = recv_bounded(&mut reset_rx).await;
         assert_eq!(frame.last_status(), Some(Status::Unknown(114)));
         assert!(reset_rx.try_recv().is_err());
     }
 
     /// Reply to the next request with an echo of the set value.
     async fn echo_next_set(device: &mut Framed<DuplexStream, HdlcCodec>) {
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(device).await;
         let tid = request.header().tid();
         let Command::PropertyValueSet(prop, value) = request.command() else {
             panic!("expected a property set, got {}", request.command());
@@ -1406,7 +1433,7 @@ mod tests {
         let get =
             tokio::spawn(async move { get_handle.get_property(Property::PhysicalChannel).await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
         assert_eq!(
             request.command(),
@@ -1431,7 +1458,7 @@ mod tests {
         // An error status resolves as the status error.
         let noop_handle = handle.clone();
         let noop = tokio::spawn(async move { noop_handle.noop().await });
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         device
             .send(Frame::new(
                 Header::new(0, request.header().tid()),
@@ -1444,7 +1471,7 @@ mod tests {
         // A response that is not a status resolves as unexpected.
         let noop_handle = handle.clone();
         let noop = tokio::spawn(async move { noop_handle.noop().await });
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         device
             .send(Frame::new(
                 Header::new(0, request.header().tid()),
@@ -1462,7 +1489,7 @@ mod tests {
         let version_handle = handle.clone();
         let version = tokio::spawn(async move { version_handle.controller_version().await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
         assert_eq!(
             request.command(),
@@ -1487,7 +1514,7 @@ mod tests {
         let version_handle = handle.clone();
         let version = tokio::spawn(async move { version_handle.controller_version().await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
         device
             .send(Frame::new(
@@ -1510,7 +1537,7 @@ mod tests {
         let status_handle = handle.clone();
         let status = tokio::spawn(async move { status_handle.last_status().await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
         assert_eq!(
             request.command(),
@@ -1535,7 +1562,7 @@ mod tests {
         let reset_handle = handle.clone();
         let reset = tokio::spawn(async move { reset_handle.reset().await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         assert_eq!(request.command(), Command::Reset);
         assert_eq!(reset.await.unwrap(), Ok(()));
     }
@@ -1551,7 +1578,7 @@ mod tests {
             );
 
         // The capability check comes first.
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
         assert_eq!(
             request.command(),
@@ -1583,7 +1610,7 @@ mod tests {
         let tx_handle = handle.clone();
         let tx = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
 
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         let tid = request.header().tid();
 
         // The transmit-done payload under the raw stream property decodes
@@ -1610,7 +1637,7 @@ mod tests {
 
         let tx_handle = handle.clone();
         let tx = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
-        let _request = device.next().await.unwrap().unwrap();
+        let _request = device_next(&mut device).await;
 
         device
             .send(unsolicited_status(Status::Unknown(114)))
@@ -1622,7 +1649,7 @@ mod tests {
         // out instead of failing busy.
         let tx_handle = handle.clone();
         let tx = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
 
         let mut done = BytesMut::new();
         PackedU32::write_to_buffer(0, &mut done);
@@ -1663,9 +1690,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(debug_rx.recv().await.is_ok());
-        assert!(insecure_rx.recv().await.is_ok());
-        assert!(log_rx.recv().await.is_ok());
+        recv_bounded(&mut debug_rx).await;
+        recv_bounded(&mut insecure_rx).await;
+        recv_bounded(&mut log_rx).await;
     }
 
     #[tokio::test(start_paused = true)]
@@ -1699,7 +1726,7 @@ mod tests {
         // The actor still serves requests afterward.
         let noop_handle = handle.clone();
         let noop = tokio::spawn(async move { noop_handle.noop().await });
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         device
             .send(Frame::new(
                 Header::new(0, request.header().tid()),
@@ -1728,7 +1755,7 @@ mod tests {
         let mut device = HdlcCodec::<NoVendor>::default().framed(device_side);
         let noop_handle = handle.clone();
         let noop = tokio::spawn(async move { noop_handle.noop().await });
-        let request = device.next().await.unwrap().unwrap();
+        let request = device_next(&mut device).await;
         device
             .send(Frame::new(
                 Header::new(0, request.header().tid()),
