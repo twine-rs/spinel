@@ -1,6 +1,7 @@
+use bytes::{BufMut, BytesMut};
+
 use super::PackedByteSlice;
 use crate::Error;
-use bytes::{BufMut, BytesMut};
 
 /// A packed representation of a `u32` value used in the Spinel protocol.
 ///
@@ -69,7 +70,7 @@ impl PackedU32 {
 
         for (i, byte) in bytes.iter().enumerate() {
             // The spinel protocol uses a maximum of 3 bytes to represent a u32
-            // Bail if we've read more than 3 bytes.
+            // Stop after reading 3 bytes.
             if i >= 3 {
                 break;
             }
@@ -83,7 +84,7 @@ impl PackedU32 {
             multiplier *= 128;
 
             // 5. If the msb of the octet was 1, go back to step 2
-            //    Otherwise, we're done
+            //    Otherwise, decoding is done
             if byte & 0x80 == 0 {
                 count = i + 1;
                 break;

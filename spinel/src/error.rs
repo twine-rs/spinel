@@ -19,7 +19,7 @@ cfg_if::cfg_if! {
     }
 }
 
-#[derive(Debug, PartialEq, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum Error {
     #[error("Unable to parse UTF8 characters")]
     DatatypeParseU8(#[from] core::str::Utf8Error),

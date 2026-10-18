@@ -1,9 +1,11 @@
-use crate::codec::vendor::{NoVendor, Vendor};
-use crate::{Frame, HdlcLiteFrame};
-use bytes::BytesMut;
 use core::marker::PhantomData;
 use std::io;
+
+use bytes::BytesMut;
 use tokio_util::codec::{Decoder, Encoder};
+
+use crate::codec::vendor::{NoVendor, Vendor};
+use crate::{Frame, HdlcLiteFrame};
 
 #[derive(Debug)]
 pub struct HdlcCodec<V: Vendor = NoVendor> {

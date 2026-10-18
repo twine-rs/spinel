@@ -1,6 +1,7 @@
+use core::fmt;
+
 use crate::codec::vendor::{NoVendor, Vendor, VendorValue};
 use crate::error::Error;
-use core::fmt;
 
 const PROP_LAST_STATUS: u32 = 0x00;
 const PROP_PROTOCOL_VERSION: u32 = 0x01;
@@ -17,16 +18,14 @@ const PROP_STREAM_LOG: u32 = 0x74;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PropertyStream {
-    /// This stream provides the capability of sending human-readable debugging output which may be displayed in
-    /// the host logs.
+    /// This stream sends human-readable debugging output that the host can display in its logs.
     ///
     /// The location of newline characters is not assumed by the host. It is the device's responsibility to insert
     /// newline characters where needed. To receive debug output, wait for [`Command::PropertyValueIs`](crate::Command::PropertyValueIs)
     /// to be sent with this property ID.
     Debug,
 
-    /// This stream provides the capability of sending and receiving data packets to and from the currently attached
-    /// network.
+    /// This stream sends and receives data packets to and from the currently attached network.
     ///
     /// The exact format of the frame metadata and data is dependent on the network protocol being used.
     ///
@@ -54,7 +53,7 @@ impl fmt::Display for PropertyStream {
 ///
 /// Covers the core protocol properties owned by `spinel`. Any wire ID the core
 /// protocol does not assign is delegated to the [`Vendor`] profile via
-/// [`Property::Vendor`]; with the default [`NoVendor`] profile such an ID is a
+/// [`Property::Vendor`]. With the default [`NoVendor`] profile such an ID is a
 /// decode error.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

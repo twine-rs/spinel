@@ -1,7 +1,8 @@
-use crate::codec::vendor::{NoVendor, Vendor};
-use crate::{Error, Frame};
 use bytes::{BufMut, Bytes, BytesMut};
 use crc16::State;
+
+use crate::codec::vendor::{NoVendor, Vendor};
+use crate::{Error, Frame};
 
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -27,7 +28,7 @@ impl<V: Vendor> HdlcLiteFrame<V> {
 
     /// Find the [`HdlcLiteFrame`] delimiter.
     ///
-    /// This is useful for syncronizing the HDLC frames before begining to
+    /// This is useful for synchronizing the HDLC frames before starting to
     /// process the frame (generally when decoding).
     ///
     /// Returns the positional index of the frame delimiter. The next index
@@ -85,6 +86,7 @@ impl<V: Vendor> HdlcLiteFrame<V> {
     }
 
     /// Encode a [`HdlcLiteFrame`] into a mutable buffer of [`BytesMut`].
+    ///
     /// todo: limit?
     pub fn encode(self, buffer: &mut BytesMut) -> Result<(), Error> {
         // todo: check for escape, new BytesMut first then write to input buffer
@@ -101,7 +103,7 @@ impl<V: Vendor> HdlcLiteFrame<V> {
     /// Decode a [`HdlcLiteFrame`] from a buffer of [`Bytes`].
     ///
     /// This function expects an aligned frame in the bytes buffer, including delimiters and CRC.
-    /// It is the responsibility of the caller to ensure that the data stream is syncronized and
+    /// It is the responsibility of the caller to ensure that the data stream is synchronized and
     /// the frame is complete before calling this function.
     pub fn decode(bytes: &Bytes) -> Result<Self, Error> {
         if let Some(f) = bytes.first() {
@@ -165,11 +167,12 @@ impl<V: Vendor> HdlcLiteFrame<V> {
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
+    use rand::distributions::Uniform;
+
     use super::*;
     use crate::Property;
     use crate::{Command, Header};
-    use bytes::Bytes;
-    use rand::distributions::Uniform;
 
     pub(crate) const TEST_DESYNC_STR: [u8; 24] = [
         0xc2, 0x5a, 0xa7, 0xaf, 0x97, 0xb1, 0x54, 0x99, 0x2b, 0xf5, 0x06, 0xe5, 0x7b, 0x5d, 0xdc,
@@ -222,7 +225,7 @@ mod tests {
         let random_index = rng.gen_range(0..test_vector.len());
         test_vector[random_index] = 0x7E;
 
-        // Determine if the frame delimiter is found in the correct position
+        // Check that the frame delimiter is in the expected position
         let bytes = Bytes::from(test_vector);
         let index = HdlcLiteFrame::<NoVendor>::find_frame_delimiter(&bytes);
         assert_eq!(index, Some(random_index));

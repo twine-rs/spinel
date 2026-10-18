@@ -95,12 +95,13 @@ impl<V: Vendor> Iterator for CapabilityIter<'_, V> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::vec::Vec;
+
+    use super::*;
 
     #[test]
     fn unknown_caps_round_trip() {
-        // 15360 packs to two bytes; with no vendor, it decodes as Unknown.
+        // 15360 packs to two bytes. With no vendor, it decodes as Unknown.
         let caps = [Capability::<NoVendor>::Unknown(15360)];
         let mut buf = BytesMut::new();
         write_caps(&caps, &mut buf);

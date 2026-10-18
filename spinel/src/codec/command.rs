@@ -1,3 +1,7 @@
+use core::fmt;
+
+use bytes::{BufMut, Bytes, BytesMut};
+
 use crate::{
     codec::{
         vendor::{NoVendor, Vendor, VendorValue},
@@ -5,8 +9,6 @@ use crate::{
     },
     error::Error,
 };
-use bytes::{BufMut, Bytes, BytesMut};
-use core::fmt;
 
 const CMD_NOOP: u32 = 0x00;
 const CMD_RESET: u32 = 0x01;
@@ -82,8 +84,9 @@ impl<V: Vendor> fmt::Display for Command<V> {
 }
 
 impl<V: Vendor> Command<V> {
-    /// Build a [`Command::PropertyValueIs`] carrying [`Property::LastStatus`]
-    /// with `status` encoded as its packed value.
+    /// Build a [`Command::PropertyValueIs`] carrying [`Property::LastStatus`].
+    ///
+    /// The `status` is encoded as its packed value.
     pub fn last_status(status: Status<V>) -> Self {
         let mut value = BytesMut::new();
         PackedU32::write_to_buffer(u32::from(status), &mut value);
@@ -297,7 +300,7 @@ mod tests {
 
     #[test]
     fn property_value_set_round_trips() {
-        // Set(HardwareAddress, [0xDE, 0xAD]) -> cmd 0x03, prop 0x08, payload.
+        // Set(HardwareAddress, [0xDE, 0xAD]) encodes to cmd 0x03, prop 0x08, payload.
         let cmd = Command::<NoVendor>::PropertyValueSet(
             Property::HardwareAddress,
             Bytes::from_static(&[0xDE, 0xAD]),
