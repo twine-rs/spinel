@@ -60,3 +60,50 @@ impl<V: Vendor> Decoder for HdlcCodec<V> {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bytes::BufMut;
+
+    use super::*;
+    use crate::{Command, Header};
+
+    /// Encode one noop frame into a buffer.
+    fn encoded_noop() -> BytesMut {
+        let mut buffer = BytesMut::new();
+        let mut codec = HdlcCodec::<NoVendor>::default();
+        codec
+            .encode(Frame::new(Header::new(0, 1), Command::Noop), &mut buffer)
+            .unwrap();
+        buffer
+    }
+
+    #[test]
+    fn decoder_waits_for_a_complete_frame() {
+        let mut codec = HdlcCodec::<NoVendor>::default();
+        let full = encoded_noop();
+
+        // An empty buffer and a partial frame both decode to none.
+        let mut src = BytesMut::new();
+        assert!(codec.decode(&mut src).unwrap().is_none());
+
+        src.put_slice(&full[..3]);
+        assert!(codec.decode(&mut src).unwrap().is_none());
+
+        // The rest of the frame completes the decode.
+        src.put_slice(&full[3..]);
+        let frame = codec.decode(&mut src).unwrap().unwrap();
+        assert_eq!(frame.command(), Command::Noop);
+    }
+
+    #[test]
+    fn decoder_reports_a_corrupt_frame_as_an_error() {
+        let mut codec = HdlcCodec::<NoVendor>::default();
+
+        // A delimited frame with a broken checksum errors instead of
+        // decoding.
+        let mut src = BytesMut::new();
+        src.put_slice(&[0x7E, 0x81, 0x00, 0x00, 0x00, 0x7E]);
+        assert!(codec.decode(&mut src).is_err());
+    }
+}

@@ -163,6 +163,18 @@ impl TryFrom<&PackedByteSlice> for PackedU32 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn decode_reads_at_most_three_bytes() {
+        // An unterminated packed integer stops at the three-byte limit
+        // and reports zero consumed bytes.
+        assert_eq!(PackedU32::decode(&[0xFF, 0xFF, 0xFF, 0x01]), (2_097_151, 0));
+    }
+
+    #[test]
+    fn value_round_trips_through_packed_from() {
+        assert_eq!(u32::from(PackedU32::from(513)), 513);
+    }
+
     #[derive(Debug)]
     struct TestItem {
         packed: [u8; 3],

@@ -257,6 +257,18 @@ mod tests {
     }
 
     #[test]
+    fn data_write_count_adds_prefix_and_payload() {
+        // A payload length other than two keeps the returned count honest:
+        // the prefix adds to the length instead of multiplying it.
+        let mut buffer = BytesMut::new();
+        assert_eq!(
+            SpinelData::write_to_buffer(&[0xAA, 0xBB, 0xCC], &mut buffer),
+            5
+        );
+        assert_eq!(&buffer[..], &[0x03, 0x00, 0xAA, 0xBB, 0xCC]);
+    }
+
+    #[test]
     fn data_round_trips_without_copying() {
         let mut buffer = BytesMut::new();
         assert_eq!(SpinelData::write_to_buffer(&[0xAA, 0xBB], &mut buffer), 4);
