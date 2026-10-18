@@ -166,6 +166,14 @@ pub struct PosixSpinelHostHandle {
 impl PosixSpinelHostHandle {
     const DEFAULT_BROADCAST_CAPACITY: usize = 16;
 
+    /// Capacity of the raw receive broadcast channel.
+    ///
+    /// Promiscuous capture delivers frames in bursts far above the rate of
+    /// the other broadcasts, so the raw stream gets a deeper ring. A
+    /// receiver that falls further behind than this loses the oldest frames
+    /// with a lag error.
+    const RAW_RX_BROADCAST_CAPACITY: usize = 512;
+
     /// Create a new [`PosixSpinelHostHandle`] from a Spinel URL
     pub fn new_from_url(_url: &str) -> Result<PosixSpinelHostHandle, Error> {
         // todo: parse URL and open with `new_from_serial`
@@ -220,7 +228,7 @@ impl PosixSpinelHostHandle {
             net_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
             net_insecure_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
             log_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
-            raw_rx_broadcast: broadcast::channel(Self::DEFAULT_BROADCAST_CAPACITY).0,
+            raw_rx_broadcast: broadcast::channel(Self::RAW_RX_BROADCAST_CAPACITY).0,
         };
 
         host_connection.run();
@@ -419,6 +427,11 @@ impl PosixSpinelHostHandle {
     /// The PSDU in `frame` excludes the 2-byte FCS. The radio computes the
     /// FCS. One raw transmit is allowed in flight at a time, so a second
     /// transmit fails with [`Error::RequestBusy`] while one is pending.
+    ///
+    /// Resolves with the report only for the radio transmit outcomes `Ok`,
+    /// `NoAck`, and `CcaFailure`. Any other status means the device rejected
+    /// the request itself, for example `InvalidState` while raw mode is off,
+    /// and resolves as [`Error::Status`] with the reported code.
     pub async fn transmit_raw(&self, frame: RawTxFrame) -> Result<RawTxDone, Error> {
         let mut payload = BytesMut::new();
         frame.encode(&mut payload)?;
@@ -437,12 +450,20 @@ impl PosixSpinelHostHandle {
         // A STREAM_RAW value is accepted too, because the Spinel header
         // documents the response under that property.
         let cmd_id = response.command().id();
-        match response.command {
+        let done = match response.command {
             Command::PropertyValueIs(Property::LastStatus, v)
             | Command::PropertyValueIs(Property::Stream(PropertyStream::Raw), v) => {
-                RawTxDone::decode(&v)
+                RawTxDone::decode(&v)?
             }
-            _ => Err(Error::UnexpectedResponse(cmd_id)),
+            _ => return Err(Error::UnexpectedResponse(cmd_id)),
+        };
+
+        // A status outside the radio transmit outcomes means the device
+        // rejected the request, which resolves as an error like every other
+        // rejected request.
+        match done.status {
+            Status::Ok | Status::NoAck | Status::CcaFailure => Ok(done),
+            status => Err(Error::Status(u32::from(status))),
         }
     }
 
@@ -621,6 +642,17 @@ where
     /// Period between sweeps for expired requests.
     const EXPIRY_SWEEP_PERIOD: Duration = Duration::from_millis(250);
 
+    /// The IID that carries unsolicited notifications for every instance.
+    const BROADCAST_IID: u8 = 0;
+
+    /// Bound for one transport write.
+    ///
+    /// The device reads, the expiry sweep, and the writes share the actor
+    /// task, so a blocked link must not stall the loop. A timed-out write
+    /// resolves the request with [`Error::RequestTimeout`] and leaves the
+    /// frame in the sink buffer, where the next write resumes flushing it.
+    const SEND_TIMEOUT: Duration = Duration::from_secs(1);
+
     fn run(mut self) {
         tokio::spawn(async move {
             let mut expiry = tokio::time::interval(Self::EXPIRY_SWEEP_PERIOD);
@@ -628,9 +660,20 @@ where
 
             loop {
                 select! {
-                    Some(msg) = self.msg.recv() => {
-                        log::trace!("Received host request: {msg}");
-                        self.process_handle_msg(msg).await;
+                    msg = self.msg.recv() => {
+                        match msg {
+                            Some(msg) => {
+                                log::trace!("Received host request: {msg}");
+                                self.process_handle_msg(msg).await;
+                            }
+                            None => {
+                                // Every handle has dropped, so no request
+                                // can arrive. End the task to release the
+                                // transport.
+                                log::trace!("All handles dropped, actor stopping");
+                                break;
+                            }
+                        }
                     }
 
                     Some(stream_msg) = self.stream.next() => {
@@ -654,9 +697,14 @@ where
     }
 
     /// Route a received frame to a pending request or a broadcast channel.
+    ///
+    /// Frames for the configured IID and the broadcast IID pass. OpenThread
+    /// devices emit unsolicited notifications, including resets, on the
+    /// broadcast IID.
     fn process_frame(&mut self, frame: Frame) {
-        if frame.header().iid() != self.iid {
-            log::trace!("Ignoring frame for IID: {}", frame.header().iid());
+        let frame_iid = frame.header().iid();
+        if frame_iid != self.iid && frame_iid != Self::BROADCAST_IID {
+            log::trace!("Ignoring frame for IID: {frame_iid}");
             return;
         }
 
@@ -840,13 +888,16 @@ where
         }
     }
 
-    /// Send a [`Frame`] to the target device.
+    /// Send a [`Frame`] to the target device within [`Self::SEND_TIMEOUT`].
     async fn send_frame(&mut self, frame: Frame) -> Result<(), Error> {
         log::trace!("Sending frame: {frame:?}");
-        self.stream
-            .send(frame)
-            .await
-            .map_err(|e| Error::Io(e.to_string()))
+        match tokio::time::timeout(Self::SEND_TIMEOUT, self.stream.send(frame)).await {
+            Ok(result) => result.map_err(|e| Error::Io(e.to_string())),
+            Err(_) => {
+                log::error!("Transport send timed out");
+                Err(Error::RequestTimeout)
+            }
+        }
     }
 
     /// Find the next TID with no pending request, starting at the cursor.
@@ -919,8 +970,12 @@ mod tests {
     use super::*;
 
     fn setup() -> (PosixSpinelHostHandle, Framed<DuplexStream, HdlcCodec>) {
+        setup_with_iid(0)
+    }
+
+    fn setup_with_iid(iid: u8) -> (PosixSpinelHostHandle, Framed<DuplexStream, HdlcCodec>) {
         let (host_side, device_side) = duplex(4096);
-        let handle = PosixSpinelHostHandle::new_from_transport(host_side, 0);
+        let handle = PosixSpinelHostHandle::new_from_transport(host_side, iid);
         let device = HdlcCodec::<NoVendor>::default().framed(device_side);
         (handle, device)
     }
@@ -1095,6 +1150,68 @@ mod tests {
         assert!(!done.frame_pending);
         assert!(!done.header_updated);
         assert_eq!(done.ack, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transmit_raw_rejection_resolves_status_error() {
+        let (handle, mut device) = setup();
+
+        let tx_handle = handle.clone();
+        let tx = tokio::spawn(async move { tx_handle.transmit_raw(raw_tx_frame()).await });
+
+        let request = device.next().await.unwrap().unwrap();
+        let tid = request.header().tid();
+
+        // A device with raw mode off rejects the set with InvalidState,
+        // which resolves as an error instead of a transmit report.
+        device
+            .send(Frame::new(
+                Header::new(0, tid),
+                Command::last_status(Status::InvalidState),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(tx.await.unwrap(), Err(Error::Status(4)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn broadcast_iid_reset_reaches_other_iid() {
+        let (handle, mut device) = setup_with_iid(1);
+
+        let pending_handle = handle.clone();
+        let pending = tokio::spawn(async move { pending_handle.noop().await });
+        let _request = device.next().await.unwrap().unwrap();
+
+        // The device announces the reset on the broadcast IID zero, which
+        // resolves requests pending on every instance.
+        device
+            .send(unsolicited_status(Status::Unknown(114)))
+            .await
+            .unwrap();
+
+        assert_eq!(pending.await.unwrap(), Err(Error::DeviceReset));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn actor_stops_when_handles_drop() {
+        let (handle, mut device) = setup();
+
+        // With every handle gone the actor ends and releases the transport,
+        // which the device observes as the end of the stream.
+        drop(handle);
+        assert!(device.next().await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn blocked_transport_write_times_out() {
+        // A one-byte transport stalls the first frame write. The bounded
+        // write resolves the request instead of stalling the actor.
+        let (host_side, device_side) = duplex(1);
+        let handle = PosixSpinelHostHandle::new_from_transport(host_side, 0);
+        let _device = device_side;
+
+        assert_eq!(handle.noop().await, Err(Error::RequestTimeout));
     }
 
     #[tokio::test(start_paused = true)]
