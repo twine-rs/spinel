@@ -42,18 +42,22 @@ enum CliCommand {
 }
 
 /// Parse a hex string into bytes.
+///
+/// Operates on characters, so non-ASCII input reports an error instead of
+/// splitting a multi-byte character.
 fn parse_hex(input: &str) -> Result<Vec<u8>, String> {
-    let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    let cleaned: Vec<char> = input.chars().filter(|c| !c.is_whitespace()).collect();
 
     if cleaned.len() % 2 != 0 {
         return Err("hex input needs an even number of digits".into());
     }
 
-    (0..cleaned.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&cleaned[i..i + 2], 16)
-                .map_err(|e| format!("invalid hex at offset {i}: {e}"))
+    cleaned
+        .chunks(2)
+        .enumerate()
+        .map(|(i, pair)| match (pair[0].to_digit(16), pair[1].to_digit(16)) {
+            (Some(hi), Some(lo)) => Ok((hi * 16 + lo) as u8),
+            _ => Err(format!("invalid hex at offset {}", i * 2)),
         })
         .collect()
 }
@@ -77,16 +81,19 @@ async fn run_raw(
 ) -> Result<(), String> {
     let promiscuous = parse_promiscuous(&promiscuous)?;
 
+    // Subscribe before enabling raw mode. The device starts forwarding
+    // frames as soon as the mode is enabled, and a broadcast with no
+    // receiver drops them.
+    let mut raw_rx = actor
+        .subscribe_raw_rx()
+        .await
+        .map_err(|e| format!("raw subscribe failed: {e}"))?;
+
     actor
         .enable_raw(channel, promiscuous)
         .await
         .map_err(|e| format!("enable raw failed: {e}"))?;
     println!("raw mode enabled on channel {channel}");
-
-    let mut raw_rx = actor
-        .subscribe_raw_rx()
-        .await
-        .map_err(|e| format!("raw subscribe failed: {e}"))?;
 
     if let Some(hex) = transmit {
         let psdu = parse_hex(&hex)?;
@@ -197,4 +204,31 @@ async fn main() -> tokio_serial::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_hex;
+
+    #[test]
+    fn parse_hex_decodes_bytes() {
+        assert_eq!(parse_hex("0aFF 01"), Ok(vec![0x0A, 0xFF, 0x01]));
+    }
+
+    #[test]
+    fn parse_hex_rejects_odd_length() {
+        assert!(parse_hex("abc").is_err());
+    }
+
+    #[test]
+    fn parse_hex_rejects_invalid_digits() {
+        assert!(parse_hex("zz").is_err());
+    }
+
+    #[test]
+    fn parse_hex_rejects_multi_byte_characters() {
+        // A multi-byte character reports an error instead of panicking on a
+        // character boundary.
+        assert!(parse_hex("\u{e9}a").is_err());
+    }
 }
