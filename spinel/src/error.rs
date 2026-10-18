@@ -86,9 +86,6 @@ mod tests {
         let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
         drop(sender);
         let error = receiver.await.unwrap_err();
-        assert!(matches!(
-            Error::from(error),
-            Error::HostConnectionRecv(_)
-        ));
+        assert!(matches!(Error::from(error), Error::HostConnectionRecv(_)));
     }
 }
