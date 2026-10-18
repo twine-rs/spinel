@@ -9,3 +9,4 @@ debug-serial
 **/mutants.*
 .claude/*
 .obsidian/*
+openspec*
