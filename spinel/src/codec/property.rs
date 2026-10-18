@@ -11,7 +11,7 @@ const PROP_CAPS: u32 = 0x05;
 const PROP_HWADDR: u32 = 0x08;
 const PROP_PHY_TX_POWER: u32 = 0x26;
 const PROP_STREAM_DEBUG: u32 = 0x70;
-const PROP_STREAM_NET: u32 = 0x71;
+const PROP_STREAM_NET: u32 = 0x72;
 const PROP_STREAM_NET_INSECURE: u32 = 0x73;
 const PROP_STREAM_LOG: u32 = 0x74;
 
