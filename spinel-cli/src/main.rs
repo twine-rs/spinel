@@ -33,7 +33,14 @@ async fn main() -> tokio_serial::Result<()> {
     actor.noop().await.unwrap();
     log::trace!("noop successful");
 
+    // Wait for the reset notification. A request sent during the device
+    // reboot is lost.
+    let mut reset_rx = actor.subscribe_reset_msg().await.unwrap();
     actor.reset().await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), reset_rx.recv())
+        .await
+        .expect("no reset notification from the device")
+        .unwrap();
     log::trace!("reset successful");
 
     let version = actor.controller_version().await.unwrap();
