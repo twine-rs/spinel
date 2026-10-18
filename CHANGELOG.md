@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `raw` subcommand in spinel-cli.
 - Request timeouts in the connection actor, with a sweep that expires
   overdue requests.
+- A GitHub Actions workflow: format, clippy, typos, the library
+  feature powerset, a workspace build, tests, a line coverage floor,
+  and mutation testing.
+- Ignore rules for mutants output, editor state, and the openspec
+  link.
 
 ### Changed
 
@@ -25,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and monitor modules.
 - Doc comment wording and code style across the workspace, with no
   functional change.
+- The readme covers install, run, library features, and the loopback,
+  with crates, license, and build badges.
 
 ### Fixed
 
