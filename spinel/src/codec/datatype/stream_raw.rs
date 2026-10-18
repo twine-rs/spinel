@@ -89,7 +89,6 @@ impl Default for RawTxConfig {
 /// The PSDU excludes the 2-byte FCS. The encoder reserves space for the FCS
 /// and the radio computes it.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RawTxFrame {
     /// The frame bytes, without the FCS.
     pub psdu: Bytes,
@@ -134,13 +133,27 @@ impl RawTxFrame {
     }
 }
 
+// A manual impl, because `Bytes` does not implement `defmt::Format`. The
+// PSDU formats as a byte slice.
+#[cfg(feature = "defmt")]
+impl defmt::Format for RawTxFrame {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(
+            fmt,
+            "RawTxFrame {{ psdu: {=[u8]}, channel: {=u8}, config: {} }}",
+            self.psdu.as_ref(),
+            self.channel,
+            &self.config,
+        );
+    }
+}
+
 /// A raw 802.15.4 frame received from the radio.
 ///
 /// Decoded from an unsolicited raw stream property value. The PSDU is a
 /// zero-copy slice of the received buffer and contains the frame bytes exactly
 /// as the device delivered them.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RawRxFrame {
     /// The received frame bytes.
     pub psdu: Bytes,
@@ -220,6 +233,26 @@ impl RawRxFrame {
             }
             Err(_) => None,
         }
+    }
+}
+
+// A manual impl, because `Bytes` does not implement `defmt::Format`. The
+// PSDU formats as a byte slice.
+#[cfg(feature = "defmt")]
+impl defmt::Format for RawRxFrame {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(
+            fmt,
+            "RawRxFrame {{ psdu: {=[u8]}, rssi: {=i8}, noise_floor: {=i8}, \
+             flags: {=u16}, channel: {}, lqi: {}, timestamp_us: {} }}",
+            self.psdu.as_ref(),
+            self.rssi,
+            self.noise_floor,
+            self.flags,
+            self.channel,
+            self.lqi,
+            self.timestamp_us,
+        );
     }
 }
 
