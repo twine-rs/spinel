@@ -76,7 +76,7 @@ impl PackedU32 {
             }
 
             // 2. Read next octet
-            // 3. Muliply value of unsigned number represented by the 7 lsb of the
+            // 3. Multiply value of unsigned number represented by the 7 lsb of the
             //    octet by the multiplier and add to the value
             value += (byte & 0x7F) as u32 * multiplier;
 
