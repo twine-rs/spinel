@@ -9,11 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Raw 802.15.4 link mode: an enable sequence, frame transmit with a
+  decoded transmit-done report, and a receive stream with RSSI, LQI,
+  channel, and timestamp metadata.
+- Spinel bool and u8 datatype codecs, raw mode properties, the MacRaw
+  capability, and promiscuous mode.
+- A generic property get and set path with typed one-byte setters.
+- A `raw` subcommand in spinel-cli.
 - Request timeouts in the connection actor, with a sweep that expires
   overdue requests.
 
 ### Changed
 
+- The spinel-cli binary installs as `spinel`, split into args, raw,
+  and monitor modules.
 - Doc comment wording and code style across the workspace, with no
   functional change.
 
